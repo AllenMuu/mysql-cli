@@ -25,7 +25,9 @@ func ExecuteWrite(ctx context.Context, pool *conn.Pool, sqlText string, opts Opt
 	}
 	res, err := tx.ExecContext(ctx, sqlText)
 	if err != nil {
-		tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return result.Empty(), fmt.Errorf("%w: %v; rollback failed: %v", ErrSQL, err, rbErr)
+		}
 		return result.Empty(), fmt.Errorf("%w: %v", ErrSQL, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -41,6 +43,9 @@ func ExecuteWrite(ctx context.Context, pool *conn.Pool, sqlText string, opts Opt
 func ExecuteTxn(ctx context.Context, pool *conn.Pool, statements []string, opts Options) (result.Result, error) {
 	if !opts.Write {
 		return result.Empty(), fmt.Errorf("%w: txn requires --write", ErrGuard)
+	}
+	if len(statements) == 0 {
+		return result.Empty(), nil
 	}
 	for _, s := range statements {
 		if safety.HasMultiStatement(s) {
@@ -59,7 +64,9 @@ func ExecuteTxn(ctx context.Context, pool *conn.Pool, statements []string, opts 
 	for _, s := range statements {
 		res, err := tx.ExecContext(ctx, s)
 		if err != nil {
-			tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil {
+				return result.Empty(), fmt.Errorf("%w: %v; rollback failed: %v", ErrSQL, err, rbErr)
+			}
 			return result.Empty(), fmt.Errorf("%w: %v", ErrSQL, err)
 		}
 		n, _ := res.RowsAffected()
