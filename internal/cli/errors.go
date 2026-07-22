@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/AllenMuu/mysql-cli/internal/format"
 	"github.com/AllenMuu/mysql-cli/internal/query"
@@ -31,7 +32,7 @@ func mapError(err error) int {
 	}
 	// connection / config failures
 	msg := err.Error()
-	if contains(msg, "connection") || contains(msg, "dial") {
+	if strings.Contains(msg, "dial") || strings.Contains(msg, "connection") {
 		return ExitConnFailed
 	}
 	return ExitConfigError
@@ -70,15 +71,3 @@ func errorCodeName(code int) string {
 	return "UNKNOWN"
 }
 
-func contains(s, sub string) bool {
-	return len(sub) > 0 && len(s) >= len(sub) && stringContains(s, sub)
-}
-
-func stringContains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}

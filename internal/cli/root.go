@@ -2,8 +2,10 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -55,6 +57,15 @@ func newRootCmd(g *Globals) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "mysql-cli",
 		Short: "MySQL CLI for AI agents (replaces mysql-mcp)",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if g.Format != "json" && g.Format != "table" && g.Format != "csv" && g.Format != "tsv" {
+				return fmt.Errorf("invalid format %q (want json|table|csv|tsv)", g.Format)
+			}
+			if _, err := time.ParseDuration(g.Timeout); err != nil {
+				return fmt.Errorf("invalid timeout %q: %w", g.Timeout, err)
+			}
+			return nil
+		},
 	}
 	pf := root.PersistentFlags()
 	pf.StringVarP(&g.Datasource, "datasource", "d", "", "named datasource from config")

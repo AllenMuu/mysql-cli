@@ -68,8 +68,3 @@ func TestErrorCodeName(t *testing.T) {
 	}
 }
 
-func TestContains(t *testing.T) {
-	assert.True(t, contains("hello world", "world"))
-	assert.False(t, contains("hello", ""))
-	assert.False(t, contains("hi", "world"))
-}

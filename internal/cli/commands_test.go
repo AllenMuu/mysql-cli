@@ -36,6 +36,16 @@ func TestTxnConnectionFailure(t *testing.T) {
 	assert.Equal(t, ExitConnFailed, code)
 }
 
+func TestInvalidFormatErrors(t *testing.T) {
+	code := Run([]string{"query", "SELECT 1", "--format", "xml"})
+	assert.Equal(t, ExitConfigError, code)
+}
+
+func TestInvalidTimeoutErrors(t *testing.T) {
+	code := Run([]string{"query", "SELECT 1", "--timeout", "abc"})
+	assert.Equal(t, ExitConfigError, code)
+}
+
 func TestSchemaCommandsFailOnConnection(t *testing.T) {
 	cases := []struct {
 		name string
