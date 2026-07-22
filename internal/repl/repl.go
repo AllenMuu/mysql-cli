@@ -12,6 +12,7 @@ import (
 	"github.com/AllenMuu/mysql-cli/internal/format"
 	"github.com/AllenMuu/mysql-cli/internal/query"
 	"github.com/AllenMuu/mysql-cli/internal/result"
+	"github.com/AllenMuu/mysql-cli/internal/safety"
 	"github.com/AllenMuu/mysql-cli/internal/schema"
 	"github.com/chzyer/readline"
 )
@@ -45,37 +46,51 @@ func Start(cfg Config) int {
 		if err != nil {
 			return 0
 		}
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+		if runOnce(line, cfg) {
+			return 0
 		}
-		if strings.HasPrefix(line, "\\") {
-			code, msg := dispatch(line, cfg)
-			if msg != "" {
-				fmt.Fprintln(cfg.Out, msg)
-			}
-			if isExit(code) {
-				return 0
-			}
-			continue
-		}
-		if looksLikeSQL(line) {
-			runSQL(cfg, line)
-			continue
-		}
-		fmt.Fprintln(cfg.Out, "unknown input")
 	}
 }
 
+func runOnce(line string, cfg Config) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return false
+	}
+	if strings.HasPrefix(line, "\\") {
+		code, msg := dispatch(line, cfg)
+		if msg != "" {
+			fmt.Fprintln(cfg.Out, msg)
+		}
+		return isExit(code)
+	}
+	if looksLikeSQL(line) {
+		runSQL(cfg, line)
+	}
+	return false
+}
+
 func runSQL(cfg Config, sqlText string) {
-	r, err := query.Execute(context.Background(), cfg.Pool, sqlText, cfg.Opts)
+	if cfg.Pool == nil {
+		fmt.Fprintln(cfg.Out, "not connected")
+		return
+	}
+	ctx := context.Background()
+	var r result.Result
+	var err error
+	switch safety.Classify(sqlText) {
+	case safety.CategoryRead, safety.CategoryUnknown:
+		r, err = query.Execute(ctx, cfg.Pool, sqlText, cfg.Opts)
+	default:
+		r, err = query.ExecuteWrite(ctx, cfg.Pool, sqlText, cfg.Opts)
+	}
 	if err != nil {
 		fmt.Fprintln(cfg.Out, err)
 		return
 	}
-	out, err := format.Format(r, cfg.Format)
-	if err != nil {
-		fmt.Fprintln(cfg.Out, err)
+	out, ferr := format.Format(r, cfg.Format)
+	if ferr != nil {
+		fmt.Fprintln(cfg.Out, "format error:", ferr)
 		return
 	}
 	fmt.Fprint(cfg.Out, out)
@@ -119,10 +134,18 @@ func runSlash(cfg Config, fn func(*conn.Pool) (result.Result, error)) (int, stri
 }
 
 func looksLikeSQL(s string) bool {
-	w := strings.ToUpper(strings.TrimLeft(s, " \t"))
-	prefixes := []string{"SELECT", "SHOW", "DESC", "EXPLAIN", "WITH", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP"}
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return false
+	}
+	w := strings.ToUpper(fields[0])
+	prefixes := []string{
+		"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN", "WITH",
+		"INSERT", "UPDATE", "DELETE", "REPLACE",
+		"CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME",
+	}
 	for _, p := range prefixes {
-		if strings.HasPrefix(w, p) {
+		if w == p {
 			return true
 		}
 	}
