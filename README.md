@@ -180,38 +180,38 @@ discover and drive it without an MCP runtime. The skill encodes trigger
 conditions, pre-flight checks, command reference, the safety model, and
 error self-repair — so the agent calls `mysql-cli` correctly the first time.
 
-### Quick install (all agents)
+### Quick install (Claude Code)
+
+`mysql-cli` ships a [Claude Code Skill](./skills/mysql/SKILL.md). Copy it into your project:
 
 ```bash
-# Install for Claude Code (project-level + global)
+cp -r skills/mysql .claude/skills/
+```
+
+Or use the installer (also installs globally):
+
+```bash
 ./scripts/install-skills.sh --agent claude
-
-# Install for all detected agents
-./scripts/install-skills.sh --agent all
-
-# Install to a specific project
 ./scripts/install-skills.sh --agent claude --project-dir ~/my-project
 ```
 
-### Per-agent installation
+### Other agents
 
-| Platform | Config location | Install command |
+`mysql-cli` works with **any agent that can run shell commands and parse JSON**, but only Claude Code natively supports the SKILL.md format. For other agents, copy the relevant sections of [`skills/mysql/SKILL.md`](./skills/mysql/SKILL.md) into their native configuration files.
+
+| Agent | Config format | How to use `mysql-cli` |
 | --- | --- | --- |
-| **Claude Code** | `.claude/skills/` | `cp -r skills/mysql .claude/skills/` |
-| **OpenCode** | `.claude/skills/` (same format) | `cp -r skills/mysql .claude/skills/` |
-| **Cursor** | `.cursor/rules/` | Create `.cursor/rules/mysql-cli.mdc` (see below) |
-| **Codex CLI** | inline shell | Call `mysql-cli query "..." -f json` directly |
-| **Aider** | inline shell | Call `mysql-cli` over shell; parse JSON output |
-| **GitHub Copilot** | `.github/copilot-instructions.md` | Add `mysql-cli` usage examples to instructions |
-| **Windsurf** | `.windsurfrules` | Add `mysql-cli` rules inline |
+| **Claude Code** | `.claude/skills/SKILL.md` (YAML frontmatter + Markdown) | `cp -r skills/mysql .claude/skills/` — auto-loaded |
+| **Cursor** | `.cursor/rules/*.mdc` (YAML frontmatter + Markdown) | Create `.cursor/rules/mysql-cli.mdc` (see example below) |
+| **OpenCode** | `.opencode.json` (JSON config) | Not SKILL.md compatible; add usage notes to your `.opencode.json` instructions or use shell directly |
+| **Codex CLI** | No local skill file; platform-managed skills | Call `mysql-cli query "..." -f json` directly via shell |
+| **Aider** | `.aider.conf.yml` (YAML) | Add to `read:` list, or call `mysql-cli` over shell |
+| **GitHub Copilot** | `.github/copilot-instructions.md` (Markdown) | Add `mysql-cli` usage examples to instructions file |
+| **Windsurf** | `.windsurfrules` (plain text) | Add `mysql-cli` rules inline |
 
-After install, the agent auto-loads the skill and invokes `mysql-cli` whenever
-the user asks about database queries, table structures, or running SQL.
+#### Cursor example
 
-#### Cursor setup
-
-Cursor uses `.mdc` rule files in `.cursor/rules/`. Create
-`.cursor/rules/mysql-cli.mdc`:
+Create `.cursor/rules/mysql-cli.mdc`:
 
 ```markdown
 ---
