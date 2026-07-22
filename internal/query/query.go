@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/AllenMuu/mysql-cli/internal/conn"
@@ -54,7 +55,7 @@ func Execute(ctx context.Context, pool *conn.Pool, sqlText string, opts Options)
 
 	rows, err := pool.DB.QueryContext(ctx, execSQL)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
 			return result.Empty(), fmt.Errorf("%w: %v", ErrTimeout, err)
 		}
 		return result.Empty(), fmt.Errorf("%w: %v", ErrSQL, err)
@@ -92,11 +93,17 @@ func applyLimit(sqlText string, limit int) string {
 	if hasLimit(sqlText) {
 		return sqlText
 	}
-	return fmt.Sprintf("SELECT * FROM (%s) AS _q LIMIT %d", sqlText, limit)
+	// Strip a trailing semicolon (and surrounding whitespace) so the wrapped
+	// subquery remains valid SQL.
+	cleaned := strings.TrimRight(strings.TrimSpace(sqlText), ";")
+	return fmt.Sprintf("SELECT * FROM (%s) AS _q LIMIT %d", cleaned, limit)
 }
 
 var ownLimitRe = regexp.MustCompile(`(?i)\bLIMIT\b\s+\d+`)
 
+// hasLimit reports whether sqlText appears to already contain a LIMIT clause.
+// It is a simple regex heuristic: LIMIT inside a string literal will be
+// false-matched. Callers that need perfect SQL parsing should not rely on this.
 func hasLimit(sqlText string) bool {
 	return ownLimitRe.MatchString(sqlText)
 }

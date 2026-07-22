@@ -54,12 +54,66 @@ func TestExecuteTimeout(t *testing.T) {
 	pool, mock := newMock(t)
 	mock.ExpectQuery("SELECT 1").WillDelayFor(200 * time.Millisecond).WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
 	_, err := Execute(context.Background(), pool, "SELECT 1", Options{Timeout: 50 * time.Millisecond})
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrTimeout)
 }
 
 func TestExecuteSQLDriverError(t *testing.T) {
 	pool, mock := newMock(t)
 	mock.ExpectQuery("SELECT bad").WillReturnError(sql.ErrNoRows)
 	_, err := Execute(context.Background(), pool, "SELECT bad", Options{})
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrSQL)
+}
+
+func TestApplyLimit(t *testing.T) {
+	tests := []struct {
+		name     string
+		sql      string
+		limit    int
+		expected string
+	}{
+		{
+			name:     "no limit returns original",
+			sql:      "SELECT id FROM t",
+			limit:    0,
+			expected: "SELECT id FROM t",
+		},
+		{
+			name:     "non-SELECT returns original",
+			sql:      "UPDATE t SET x=1",
+			limit:    10,
+			expected: "UPDATE t SET x=1",
+		},
+		{
+			name:     "existing LIMIT returns original",
+			sql:      "SELECT id FROM t LIMIT 5",
+			limit:    10,
+			expected: "SELECT id FROM t LIMIT 5",
+		},
+		{
+			name:     "wraps SELECT with subquery",
+			sql:      "SELECT id FROM t",
+			limit:    100,
+			expected: "SELECT * FROM (SELECT id FROM t) AS _q LIMIT 100",
+		},
+		{
+			name:     "strips trailing semicolon before wrapping",
+			sql:      "SELECT id FROM t;",
+			limit:    100,
+			expected: "SELECT * FROM (SELECT id FROM t) AS _q LIMIT 100",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, applyLimit(tt.sql, tt.limit))
+		})
+	}
+}
+
+func TestApplyLimitIgnoresLimitInStringLiteral(t *testing.T) {
+	// Documenting current regex behavior: LIMIT inside a string literal is
+	// treated as a real LIMIT clause, so the query is not wrapped. This is a
+	// known limitation of the simple heuristic used by hasLimit.
+	sql := "SELECT 'LIMIT 10' FROM t"
+	assert.Equal(t, sql, applyLimit(sql, 100))
 }
