@@ -35,7 +35,7 @@ func DSN(ds config.Datasource) string {
 	}
 	params.Set("charset", charset)
 	if ds.SQLMode != "" {
-		params.Set("sql_mode", "'"+ds.SQLMode+"'")
+		params.Set("sql_mode", ds.SQLMode)
 	}
 	if ds.Collation != "" {
 		params.Set("collation", ds.Collation)
@@ -60,7 +60,11 @@ func Open(ctx context.Context, ds config.Datasource) (*Pool, error) {
 	}
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(2)
-	pingCtx, cancel := context.WithTimeout(ctx, time.Duration(ds.ConnectTimeout)*time.Second)
+	pingTimeout := ds.ConnectTimeout
+	if pingTimeout <= 0 {
+		pingTimeout = 10
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, time.Duration(pingTimeout)*time.Second)
 	defer cancel()
 	if err := db.PingContext(pingCtx); err != nil {
 		db.Close()

@@ -17,7 +17,7 @@ func TestDSN(t *testing.T) {
 	dsn := DSN(ds)
 	assert.Contains(t, dsn, "root:secret@tcp(127.0.0.1:3306)/test")
 	assert.Contains(t, dsn, "charset=utf8mb4")
-	assert.Contains(t, dsn, "sql_mode=%27TRADITIONAL%27")
+	assert.Contains(t, dsn, "sql_mode=TRADITIONAL")
 }
 
 func TestDSNNoDB(t *testing.T) {
