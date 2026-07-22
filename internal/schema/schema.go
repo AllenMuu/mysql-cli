@@ -41,7 +41,10 @@ func queryRows(ctx context.Context, pool *conn.Pool, sqlText string) (result.Res
 		}
 		res.Rows = append(res.Rows, vals)
 	}
-	return res, rows.Err()
+	if err := rows.Err(); err != nil {
+		return result.Empty(), err
+	}
+	return res, nil
 }
 
 // Databases lists non-system databases.
@@ -59,8 +62,7 @@ func Databases(ctx context.Context, pool *conn.Pool) (result.Result, error) {
 		}
 		filtered = append(filtered, row)
 	}
-	r.Rows = filtered
-	return r, nil
+	return result.Result{Columns: r.Columns, Rows: filtered}, nil
 }
 
 // Tables lists tables in db (or the current database if db is empty).

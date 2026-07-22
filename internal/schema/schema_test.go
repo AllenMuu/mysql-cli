@@ -30,7 +30,7 @@ func TestDatabases(t *testing.T) {
 func TestTables(t *testing.T) {
 	pool, mock := newMock(t)
 	rows := sqlmock.NewRows([]string{"Tables_in_test"}).AddRow("users").AddRow("orders")
-	mock.ExpectQuery("SHOW TABLES").WillReturnRows(rows)
+	mock.ExpectQuery("SHOW TABLES FROM").WillReturnRows(rows)
 	r, err := Tables(context.Background(), pool, "test")
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(r.Rows))
