@@ -21,21 +21,22 @@
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 AGENT="${1:-claude}"
-PROJECT_DIR_FLAG=""
+PROJECT_DIR=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --agent) AGENT="$2"; shift 2 ;;
-        --project-dir) PROJECT_DIR_FLAG="$2"; shift 2 ;;
+        --project-dir) PROJECT_DIR="$2"; shift 2 ;;
         *) shift ;;
     esac
 done
 
-if [[ -n "$PROJECT_DIR_FLAG" ]]; then
-    PROJECT_DIR="$PROJECT_DIR_FLAG"
+# Default project dir is repo itself (for local install) if not specified
+if [[ -z "$PROJECT_DIR" ]]; then
+    PROJECT_DIR="$REPO_DIR"
 fi
 
 echo "🔧 mysql-cli Skill Installer"
@@ -49,13 +50,13 @@ install_claude() {
     if [[ -d "$target" ]]; then
         echo "   ℹ️  $target already exists, updating..."
     fi
-    cp -r "${PROJECT_DIR}/skills/mysql" "$target"
+    cp -r "${REPO_DIR}/skills/mysql" "$target"
     echo "   ✅ Installed for Claude Code: $target"
 
     # Also install user-wide
     local global_target="$HOME/.claude/skills/mysql"
     mkdir -p "$(dirname "$global_target")"
-    cp -r "${PROJECT_DIR}/skills/mysql" "$global_target"
+    cp -r "${REPO_DIR}/skills/mysql" "$global_target"
     echo "   ✅ Installed globally: $global_target"
 }
 
