@@ -7,6 +7,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/AllenMuu/mysql-cli/internal/result"
+	"github.com/AllenMuu/mysql-cli/internal/repl"
 	"github.com/spf13/cobra"
 )
 
@@ -55,8 +57,10 @@ func Run(args []string) int {
 
 func newRootCmd(g *Globals) *cobra.Command {
 	root := &cobra.Command{
-		Use:   "mysql-cli",
-		Short: "MySQL CLI for AI agents (replaces mysql-mcp)",
+		Use:           "mysql-cli",
+		Short:         "MySQL CLI for AI agents (replaces mysql-mcp)",
+		SilenceErrors: true,
+		SilenceUsage:  true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if g.Format != "json" && g.Format != "table" && g.Format != "csv" && g.Format != "tsv" {
 				return fmt.Errorf("invalid format %q (want json|table|csv|tsv)", g.Format)
@@ -93,5 +97,19 @@ func newRootCmd(g *Globals) *cobra.Command {
 		newExploreCmd(g),
 		newAnalyzeCmd(g),
 	)
+	// No subcommand -> interactive REPL (human debug; not the agent path).
+	root.RunE = func(cmd *cobra.Command, args []string) error {
+		pool, err := g.openPool()
+		if err != nil {
+			g.emitResult(result.Empty(), err)
+			return err
+		}
+		defer pool.Close()
+		code := repl.Start(repl.Config{Pool: pool, Opts: g.opts(), Out: g.out, Format: g.Format})
+		if code == 0 {
+			return nil
+		}
+		return fmt.Errorf("repl exited with code %d", code)
+	}
 	return root
 }
