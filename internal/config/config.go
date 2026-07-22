@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 
 	"github.com/BurntSushi/toml"
 )
@@ -113,56 +114,119 @@ func fileToDatasource(fd fileDatasource) Datasource {
 }
 
 // expandPassword replaces ${ENV} placeholders with the env value.
-func expandPassword(pw string) string {
+func expandPassword(pw string) (string, error) {
 	m := placeholderRe.FindStringSubmatch(pw)
 	if m == nil {
-		return pw
+		return pw, nil
 	}
-	return os.Getenv(m[1])
+	if v, ok := os.LookupEnv(m[1]); ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("password env var %s is not set", m[1])
 }
 
-// FromEnv builds a datasource from MYSQL_* environment variables.
+// FromEnv returns a datasource from env vars (with defaults). Used for pure-env mode.
 func FromEnv() Datasource {
-	return Datasource{
-		Host:           getenv("MYSQL_HOST", "localhost"),
-		Port:           getenvInt("MYSQL_PORT", 3306),
-		User:           os.Getenv("MYSQL_USER"),
-		Password:       os.Getenv("MYSQL_PASSWORD"),
-		Database:       os.Getenv("MYSQL_DATABASE"),
-		SSLMode:        os.Getenv("MYSQL_SSL_MODE"),
-		SSLCA:          os.Getenv("MYSQL_SSL_CA"),
-		ConnectTimeout: getenvInt("MYSQL_CONNECT_TIMEOUT", 10),
-		SQLMode:        getenv("MYSQL_SQL_MODE", "TRADITIONAL"),
-		Charset:        getenv("MYSQL_CHARSET", "utf8mb4"),
-		Collation:      os.Getenv("MYSQL_COLLATION"),
-		AuthPlugin:     os.Getenv("MYSQL_AUTH_PLUGIN"),
-	}
+	return applyDefaults(applyEnv(Datasource{}))
 }
 
-// Resolve merges by precedence: overrides > named datasource > env defaults.
-// If name is empty, the Config's default is used; if none, env is used.
+// Resolve: flag > env > file > default.
 func Resolve(cfg *Config, name string, overrides Datasource) (Datasource, error) {
-	base, err := baseFor(cfg, name)
+	base, err := fileBase(cfg, name)
 	if err != nil {
 		return Datasource{}, err
 	}
-	return merge(base, overrides), nil
+	base = applyEnv(base)          // env > file (only fields env actually sets)
+	base = merge(base, overrides)  // flag > env
+	base = applyDefaults(base)     // default for still-zero fields
+	return base, nil
 }
 
-func baseFor(cfg *Config, name string) (Datasource, error) {
-	if name == "" {
-		if cfg == nil || cfg.DefaultDatasource == "" {
-			return FromEnv(), nil
-		}
+// fileBase returns the file datasource for name (or default); zero if none.
+func fileBase(cfg *Config, name string) (Datasource, error) {
+	if name == "" && cfg != nil && cfg.DefaultDatasource != "" {
 		name = cfg.DefaultDatasource
 	}
-	if cfg != nil {
+	if name != "" {
+		if cfg == nil {
+			return Datasource{}, fmt.Errorf("%w: %s", ErrUnknownDatasource, name)
+		}
 		if ds, ok := cfg.Datasources[name]; ok {
-			ds.Password = expandPassword(ds.Password)
+			pw, err := expandPassword(ds.Password)
+			if err != nil {
+				return Datasource{}, err
+			}
+			ds.Password = pw
 			return ds, nil
 		}
+		return Datasource{}, fmt.Errorf("%w: %s", ErrUnknownDatasource, name)
 	}
-	return Datasource{}, fmt.Errorf("%w: %s", ErrUnknownDatasource, name)
+	return Datasource{}, nil
+}
+
+// applyEnv overlays env vars that are actually set (os.LookupEnv).
+func applyEnv(ds Datasource) Datasource {
+	if v, ok := os.LookupEnv("MYSQL_HOST"); ok {
+		ds.Host = v
+	}
+	if v, ok := os.LookupEnv("MYSQL_PORT"); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			ds.Port = n
+		}
+	}
+	if v, ok := os.LookupEnv("MYSQL_USER"); ok {
+		ds.User = v
+	}
+	if v, ok := os.LookupEnv("MYSQL_PASSWORD"); ok {
+		ds.Password = v
+	}
+	if v, ok := os.LookupEnv("MYSQL_DATABASE"); ok {
+		ds.Database = v
+	}
+	if v, ok := os.LookupEnv("MYSQL_SSL_MODE"); ok {
+		ds.SSLMode = v
+	}
+	if v, ok := os.LookupEnv("MYSQL_SSL_CA"); ok {
+		ds.SSLCA = v
+	}
+	if v, ok := os.LookupEnv("MYSQL_CONNECT_TIMEOUT"); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			ds.ConnectTimeout = n
+		}
+	}
+	if v, ok := os.LookupEnv("MYSQL_SQL_MODE"); ok {
+		ds.SQLMode = v
+	}
+	if v, ok := os.LookupEnv("MYSQL_CHARSET"); ok {
+		ds.Charset = v
+	}
+	if v, ok := os.LookupEnv("MYSQL_COLLATION"); ok {
+		ds.Collation = v
+	}
+	if v, ok := os.LookupEnv("MYSQL_AUTH_PLUGIN"); ok {
+		ds.AuthPlugin = v
+	}
+	return ds
+}
+
+// applyDefaults fills defaults for still-zero fields.
+func applyDefaults(ds Datasource) Datasource {
+	if ds.Host == "" {
+		ds.Host = "localhost"
+	}
+	if ds.Port == 0 {
+		ds.Port = 3306
+	}
+	if ds.ConnectTimeout == 0 {
+		ds.ConnectTimeout = 10
+	}
+	if ds.SQLMode == "" {
+		ds.SQLMode = "TRADITIONAL"
+	}
+	if ds.Charset == "" {
+		ds.Charset = "utf8mb4"
+	}
+	return ds
 }
 
 // merge applies non-zero overrides onto base.
@@ -189,29 +253,25 @@ func merge(base, over Datasource) Datasource {
 	if over.SSLCA != "" {
 		out.SSLCA = over.SSLCA
 	}
+	if over.ConnectTimeout > 0 {
+		out.ConnectTimeout = over.ConnectTimeout
+	}
+	if over.SQLMode != "" {
+		out.SQLMode = over.SQLMode
+	}
+	if over.Charset != "" {
+		out.Charset = over.Charset
+	}
+	if over.Collation != "" {
+		out.Collation = over.Collation
+	}
+	if over.AuthPlugin != "" {
+		out.AuthPlugin = over.AuthPlugin
+	}
 	if over.SSH != nil {
 		out.SSH = over.SSH
 	}
 	return out
-}
-
-func getenv(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
-func getenvInt(k string, def int) int {
-	v := os.Getenv(k)
-	if v == "" {
-		return def
-	}
-	var n int
-	if _, err := fmt.Sscanf(v, "%d", &n); err != nil {
-		return def
-	}
-	return n
 }
 
 // ErrUnknownDatasource is returned when a named datasource cannot be found.
