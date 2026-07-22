@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"net/url"
 	"time"
 
@@ -50,6 +51,9 @@ func DSN(ds config.Datasource) string {
 // Pool wraps a *sql.DB for the active datasource.
 type Pool struct {
 	DB *sql.DB
+	// closer, when non-nil, releases SSH tunnel resources (ssh client +
+	// local listener) backing the DB connection. It is closed by Close.
+	closer io.Closer
 }
 
 // Open opens a pooled connection and verifies it with a Ping.
@@ -62,16 +66,21 @@ func Open(ctx context.Context, ds config.Datasource) (*Pool, error) {
 // openWithTunnelHook is the testable form of Open.
 func openWithTunnelHook(ctx context.Context, ds config.Datasource, hook tunnelHook) (*Pool, error) {
 	effective := ds
+	var tunnelCloser io.Closer
 	if ds.SSH != nil && ds.SSH.Enable {
-		host, port, err := hook(ds.SSH)
+		host, port, closer, err := hook(ds.SSH)
 		if err != nil {
 			return nil, err
 		}
 		effective.Host = host
 		effective.Port = port
+		tunnelCloser = closer
 	}
 	db, err := sql.Open("mysql", DSN(effective))
 	if err != nil {
+		if tunnelCloser != nil {
+			tunnelCloser.Close()
+		}
 		return nil, err
 	}
 	db.SetMaxOpenConns(10)
@@ -84,9 +93,12 @@ func openWithTunnelHook(ctx context.Context, ds config.Datasource, hook tunnelHo
 	defer cancel()
 	if err := db.PingContext(pingCtx); err != nil {
 		db.Close()
+		if tunnelCloser != nil {
+			tunnelCloser.Close()
+		}
 		return nil, err
 	}
-	return &Pool{DB: db}, nil
+	return &Pool{DB: db, closer: tunnelCloser}, nil
 }
 
 // Ping verifies the connection is alive.
@@ -94,7 +106,11 @@ func (p *Pool) Ping(ctx context.Context) error {
 	return p.DB.PingContext(ctx)
 }
 
-// Close releases the pool.
+// Close releases the pool. If a backing SSH tunnel was established, it is
+// torn down before the *sql.DB is closed.
 func (p *Pool) Close() error {
+	if p.closer != nil {
+		p.closer.Close()
+	}
 	return p.DB.Close()
 }
