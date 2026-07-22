@@ -28,9 +28,10 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	defer c.Terminate(ctx)
 	dsn, _ = c.ConnectionString(ctx, "charset=utf8mb4")
-	os.Exit(m.Run())
+	code := m.Run()
+	_ = c.Terminate(ctx)
+	os.Exit(code)
 }
 
 func parseConn(dsn string) (host, port, user, pass, db string) {
@@ -62,6 +63,7 @@ func parseConn(dsn string) (host, port, user, pass, db string) {
 }
 
 func run(t *testing.T, args ...string) int {
+	t.Helper()
 	host, port, user, pass, db := parseConn(dsn)
 	all := append([]string{}, args...)
 	all = append(all, "--host", host, "--port", port, "--user", user, "--password", pass, "--db", db, "--format", "json")
@@ -111,12 +113,12 @@ func TestSchemaAndSample(t *testing.T) {
 	if dsn == "" {
 		t.Skip("integration not enabled")
 	}
-	run(t, "query", "CREATE TABLE t (id int, name varchar(20))", "--write", "--ddl", "--yes")
-	run(t, "query", "INSERT INTO t VALUES (1,'a')", "--write")
-	if code := run(t, "schema", "t"); code != cli.ExitOK {
+	run(t, "query", "CREATE TABLE s (id int, name varchar(20))", "--write", "--ddl", "--yes")
+	run(t, "query", "INSERT INTO s VALUES (1,'a')", "--write")
+	if code := run(t, "schema", "s"); code != cli.ExitOK {
 		t.Fatalf("schema: %d", code)
 	}
-	if code := run(t, "sample", "t", "-n", "5"); code != cli.ExitOK {
+	if code := run(t, "sample", "s", "-n", "5"); code != cli.ExitOK {
 		t.Fatalf("sample: %d", code)
 	}
 	if code := run(t, "tables"); code != cli.ExitOK {
