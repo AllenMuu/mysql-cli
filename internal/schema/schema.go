@@ -39,6 +39,11 @@ func queryRows(ctx context.Context, pool *conn.Pool, sqlText string) (result.Res
 		if err := rows.Scan(ptrs...); err != nil {
 			return result.Empty(), err
 		}
+		for i, v := range vals {
+			if b, ok := v.([]byte); ok {
+				vals[i] = string(b)
+			}
+		}
 		res.Rows = append(res.Rows, vals)
 	}
 	if err := rows.Err(); err != nil {

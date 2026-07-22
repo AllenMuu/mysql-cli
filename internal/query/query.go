@@ -76,6 +76,11 @@ func Execute(ctx context.Context, pool *conn.Pool, sqlText string, opts Options)
 		if err := rows.Scan(ptrs...); err != nil {
 			return result.Empty(), fmt.Errorf("%w: %v", ErrSQL, err)
 		}
+		for i, v := range vals {
+			if b, ok := v.([]byte); ok {
+				vals[i] = string(b)
+			}
+		}
 		res.Rows = append(res.Rows, vals)
 	}
 	if err := rows.Err(); err != nil {
