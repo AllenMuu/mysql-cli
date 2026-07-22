@@ -53,14 +53,30 @@ type Pool struct {
 }
 
 // Open opens a pooled connection and verifies it with a Ping.
+// When SSH is enabled, a tunnel is established first and the DSN points at
+// the local forwarded port.
 func Open(ctx context.Context, ds config.Datasource) (*Pool, error) {
-	db, err := sql.Open("mysql", DSN(ds))
+	return openWithTunnelHook(ctx, ds, defaultTunnelHook)
+}
+
+// openWithTunnelHook is the testable form of Open.
+func openWithTunnelHook(ctx context.Context, ds config.Datasource, hook tunnelHook) (*Pool, error) {
+	effective := ds
+	if ds.SSH != nil && ds.SSH.Enable {
+		host, port, err := hook(ds.SSH)
+		if err != nil {
+			return nil, err
+		}
+		effective.Host = host
+		effective.Port = port
+	}
+	db, err := sql.Open("mysql", DSN(effective))
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(2)
-	pingTimeout := ds.ConnectTimeout
+	pingTimeout := effective.ConnectTimeout
 	if pingTimeout <= 0 {
 		pingTimeout = 10
 	}
