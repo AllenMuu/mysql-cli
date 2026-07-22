@@ -175,26 +175,59 @@ The tunnel is opened before the DB connection and closed together with it.
 
 ## Usage with AI Agents
 
-`mysql-cli` ships an [Agent Skill](./skills/mysql/SKILL.md) so agents like
-Claude Code can discover and drive it without an MCP runtime. The skill encodes
-trigger conditions, pre-flight checks, command reference, the safety model, and
-error self-repair - so the agent calls `mysql-cli` correctly the first time.
+`mysql-cli` ships an [Agent Skill](./skills/mysql/SKILL.md) so agents can
+discover and drive it without an MCP runtime. The skill encodes trigger
+conditions, pre-flight checks, command reference, the safety model, and
+error self-repair — so the agent calls `mysql-cli` correctly the first time.
 
-### Install the skill
+### Quick install (all agents)
 
 ```bash
-# Project-level (recommended) / 项目级(推荐)
-cp -r skills/* .claude/skills/
+# Install for Claude Code (project-level + global)
+./scripts/install-skills.sh --agent claude
 
-# User-level (all your projects) / 用户级(所有项目)
-cp -r skills/* ~/.claude/skills/
+# Install for all detected agents
+./scripts/install-skills.sh --agent all
+
+# Install to a specific project
+./scripts/install-skills.sh --agent claude --project-dir ~/my-project
 ```
 
-After install, Claude Code auto-loads the skill's `SKILL.md` and invokes
-`mysql-cli` whenever the user asks about database queries, table structures, or
-running SQL.
+### Per-agent installation
 
-### Available skills
+| Platform | Config location | Install command |
+| --- | --- | --- |
+| **Claude Code** | `.claude/skills/` | `cp -r skills/mysql .claude/skills/` |
+| **OpenCode** | `.claude/skills/` (same format) | `cp -r skills/mysql .claude/skills/` |
+| **Cursor** | `.cursor/rules/` | Create `.cursor/rules/mysql-cli.mdc` (see below) |
+| **Codex CLI** | inline shell | Call `mysql-cli query "..." -f json` directly |
+| **Aider** | inline shell | Call `mysql-cli` over shell; parse JSON output |
+| **GitHub Copilot** | `.github/copilot-instructions.md` | Add `mysql-cli` usage examples to instructions |
+| **Windsurf** | `.windsurfrules` | Add `mysql-cli` rules inline |
+
+After install, the agent auto-loads the skill and invokes `mysql-cli` whenever
+the user asks about database queries, table structures, or running SQL.
+
+#### Cursor setup
+
+Cursor uses `.mdc` rule files in `.cursor/rules/`. Create
+`.cursor/rules/mysql-cli.mdc`:
+
+```markdown
+---
+description: MySQL queries and schema exploration via mysql-cli
+globs: *.sql
+---
+Use `mysql-cli` for all database operations. Default read-only.
+- Read: `mysql-cli query "<sql>" -f json`
+- Write (DML): `mysql-cli query "<sql>" --write -f json`
+- DDL: `mysql-cli query "<sql>" --write --ddl -f json`
+- Schema: `mysql-cli schema <table> -f json`
+- Transaction: `mysql-cli txn "<s1>" "<s2>" --write -f json`
+See `~/.config/mysql-cli/config.toml` for datasource config.
+```
+
+### Available skill
 
 | Skill | Path | Description |
 | --- | --- | --- |
@@ -202,30 +235,13 @@ running SQL.
 
 ### Setup notes
 
-- **`mysql-cli` must be on `PATH`** - install with
+- **`mysql-cli` must be on `PATH`** — install with
   `go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest`, or edit the
   skill to point at your built binary. / `mysql-cli` 必须在 `PATH` 中。
-- **Config file** - the skill expects `~/.config/mysql-cli/config.toml`
+- **Config file** — the skill expects `~/.config/mysql-cli/config.toml`
   (override with `--config`). See [Configure](#configure). / 需配置文件。
-- **Default JSON output** - the skill relies on the JSON envelope + exit codes;
+- **Default JSON output** — the skill relies on the JSON envelope + exit codes;
   keep `-f json` (the default) when driving programmatically. / 默认 JSON 输出。
-
-### Compatibility with other agent platforms
-
-The skill follows the `.claude/skills/` convention (YAML frontmatter + Markdown)
-used by Claude Code. Other agents don't all read this format, but `mysql-cli`
-itself is platform-agnostic - any agent that can run a shell and parse JSON can
-drive it directly:
-
-| Platform | How to use `mysql-cli` |
-| --- | --- |
-| **Claude Code** | Copy `skills/*` into `.claude/skills/` (skill auto-loads) |
-| **Cursor** | Paste the skill into a Cursor Rule, or call `mysql-cli` directly |
-| **Codex / Aider** | Call `mysql-cli` over the shell; parse JSON output |
-| **Any MCP host** | Wrap `mysql-cli` in a thin MCP shim if you still want MCP |
-
-Because the CLI defaults to JSON with stable exit codes, no special integration
-is required - the skill is just a convenience layer for Claude Code.
 
 ## Architecture
 
