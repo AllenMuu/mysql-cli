@@ -16,10 +16,13 @@ func Explore(ctx context.Context, pool *conn.Pool) (result.Result, error) {
 	}
 	out := result.Result{Columns: []string{"database", "table"}}
 	for _, drow := range dbs.Rows {
-		dbName, _ := drow[0].(string)
+		dbName, ok := drow[0].(string)
+		if !ok {
+			continue
+		}
 		tbls, err := Tables(ctx, pool, dbName)
 		if err != nil {
-			continue
+			return result.Empty(), err
 		}
 		for _, trow := range tbls.Rows {
 			tName, _ := trow[0].(string)
@@ -40,24 +43,28 @@ func Analyze(ctx context.Context, pool *conn.Pool, table string) (result.Result,
 	if err != nil {
 		return result.Empty(), err
 	}
+	const sampleWidth = 5
 	out := result.Result{Columns: []string{"section", "col1", "col2", "col3", "col4", "col5"}}
 	for _, row := range sc.Rows {
-		out.Rows = append(out.Rows, padRow("schema", row, 5))
+		out.Rows = append(out.Rows, padRow("schema", row, sampleWidth))
 	}
-	for _, row := range sm.Rows {
-		out.Rows = append(out.Rows, padRow("sample", row, 5))
+	for i, row := range sm.Rows {
+		if i >= sampleWidth {
+			break
+		}
+		out.Rows = append(out.Rows, padRow("sample", row, sampleWidth))
 	}
 	return out, nil
 }
 
 func padRow(section string, row []any, width int) []any {
-	out := make([]any, 0, width+1)
-	out = append(out, section)
+	out := make([]any, width+1)
+	out[0] = section
 	for i := 0; i < width; i++ {
 		if i < len(row) {
-			out = append(out, fmt.Sprintf("%v", row[i]))
+			out[i+1] = fmt.Sprintf("%v", row[i])
 		} else {
-			out = append(out, "")
+			out[i+1] = ""
 		}
 	}
 	return out
