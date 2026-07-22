@@ -24,7 +24,7 @@ func DSN(ds config.Datasource) string {
 		port = 3306
 	}
 	timeout := ds.ConnectTimeout
-	if timeout == 0 {
+	if timeout <= 0 {
 		timeout = 10
 	}
 	params := url.Values{}

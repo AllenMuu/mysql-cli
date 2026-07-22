@@ -26,6 +26,37 @@ func TestDSNNoDB(t *testing.T) {
 	assert.Contains(t, dsn, "tcp(h:3306)/")
 }
 
+func TestDSNDefaults(t *testing.T) {
+	ds := config.Datasource{User: "u", Password: "p"}
+	dsn := DSN(ds)
+	assert.Contains(t, dsn, "tcp(localhost:3306)")
+	assert.Contains(t, dsn, "timeout=10s")
+}
+
+func TestDSNCollation(t *testing.T) {
+	ds := config.Datasource{Host: "h", Port: 3306, User: "u", Password: "p", Collation: "utf8mb4_bin"}
+	dsn := DSN(ds)
+	assert.Contains(t, dsn, "collation=utf8mb4_bin")
+}
+
+func TestDSNSSLMode(t *testing.T) {
+	ds := config.Datasource{Host: "h", Port: 3306, User: "u", Password: "p", SSLMode: "REQUIRED"}
+	dsn := DSN(ds)
+	assert.Contains(t, dsn, "tls=REQUIRED")
+}
+
+func TestDSNCustomCharset(t *testing.T) {
+	ds := config.Datasource{Host: "h", Port: 3306, User: "u", Password: "p", Charset: "utf8"}
+	dsn := DSN(ds)
+	assert.Contains(t, dsn, "charset=utf8")
+}
+
+func TestDSNCustomTimeout(t *testing.T) {
+	ds := config.Datasource{Host: "h", Port: 3306, User: "u", Password: "p", ConnectTimeout: 5}
+	dsn := DSN(ds)
+	assert.Contains(t, dsn, "timeout=5s")
+}
+
 func TestOpenPings(t *testing.T) {
 	// Use a closed listener to force a fast connection failure.
 	ds := config.Datasource{Host: "127.0.0.1", Port: 1, User: "u", Password: "p", ConnectTimeout: 1}
