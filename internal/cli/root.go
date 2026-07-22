@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"time"
+	"strings"
 
 	"github.com/AllenMuu/mysql-cli/internal/result"
 	"github.com/AllenMuu/mysql-cli/internal/repl"
@@ -50,6 +51,9 @@ func Run(args []string) int {
 	root := newRootCmd(g)
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
+		if strings.HasPrefix(err.Error(), "repl exited") {
+			return ExitOK
+		}
 		return mapError(err)
 	}
 	return ExitOK
@@ -64,10 +68,10 @@ func newRootCmd(g *Globals) *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if g.Format != "json" && g.Format != "table" && g.Format != "csv" && g.Format != "tsv" {
 				return fmt.Errorf("invalid format %q (want json|table|csv|tsv)", g.Format)
-			}
+		}
 			if _, err := time.ParseDuration(g.Timeout); err != nil {
 				return fmt.Errorf("invalid timeout %q: %w", g.Timeout, err)
-			}
+		}
 			return nil
 		},
 	}
