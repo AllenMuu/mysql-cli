@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,7 +57,8 @@ func TestFromEnv(t *testing.T) {
 	t.Setenv("MYSQL_USER", "envuser")
 	t.Setenv("MYSQL_PASSWORD", "envpass")
 	t.Setenv("MYSQL_DATABASE", "envdb")
-	ds := FromEnv()
+	ds, err := FromEnv()
+	assert.NoError(t, err)
 	assert.Equal(t, "envhost", ds.Host)
 	assert.Equal(t, 3307, ds.Port)
 	assert.Equal(t, "envuser", ds.User)
@@ -137,15 +139,35 @@ auth_plugin = "mysql_native_password"
 }
 
 func TestPlaceholderUnsetErrors(t *testing.T) {
-	os.Unsetenv("MISSING_VAR")
 	cfg, _ := LoadFile(writeTmp(t, `
 [datasource.dev]
 host = "db"
 password = "${MISSING_VAR}"
 `))
 	_, err := Resolve(cfg, "dev", Datasource{})
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrUnknownDatasource) || err.Error() == "password env var MISSING_VAR is not set")
+	assert.ErrorIs(t, err, ErrPlaceholderUnset)
+	assert.False(t, errors.Is(err, ErrUnknownDatasource))
+}
+
+func TestFlagOverridesEnv(t *testing.T) {
+	t.Setenv("MYSQL_HOST", "envhost")
+	ds, err := Resolve(nil, "", Datasource{Host: "flaghost"})
+	assert.NoError(t, err)
+	assert.Equal(t, "flaghost", ds.Host)
+}
+
+func TestEnvInvalidPortErrors(t *testing.T) {
+	t.Setenv("MYSQL_PORT", "abc")
+	_, err := Resolve(nil, "", Datasource{})
+	assert.ErrorIs(t, err, strconv.ErrSyntax)
+	assert.ErrorContains(t, err, "invalid MYSQL_PORT")
+}
+
+func TestEnvInvalidConnectTimeoutErrors(t *testing.T) {
+	t.Setenv("MYSQL_CONNECT_TIMEOUT", "xyz")
+	_, err := Resolve(nil, "", Datasource{})
+	assert.ErrorIs(t, err, strconv.ErrSyntax)
+	assert.ErrorContains(t, err, "invalid MYSQL_CONNECT_TIMEOUT")
 }
 
 func writeTmp(t *testing.T, content string) string {

@@ -122,12 +122,16 @@ func expandPassword(pw string) (string, error) {
 	if v, ok := os.LookupEnv(m[1]); ok {
 		return v, nil
 	}
-	return "", fmt.Errorf("password env var %s is not set", m[1])
+	return "", fmt.Errorf("%w: %s", ErrPlaceholderUnset, m[1])
 }
 
 // FromEnv returns a datasource from env vars (with defaults). Used for pure-env mode.
-func FromEnv() Datasource {
-	return applyDefaults(applyEnv(Datasource{}))
+func FromEnv() (Datasource, error) {
+	ds, err := applyEnv(Datasource{})
+	if err != nil {
+		return Datasource{}, err
+	}
+	return applyDefaults(ds), nil
 }
 
 // Resolve: flag > env > file > default.
@@ -136,9 +140,12 @@ func Resolve(cfg *Config, name string, overrides Datasource) (Datasource, error)
 	if err != nil {
 		return Datasource{}, err
 	}
-	base = applyEnv(base)          // env > file (only fields env actually sets)
-	base = merge(base, overrides)  // flag > env
-	base = applyDefaults(base)     // default for still-zero fields
+	base, err = applyEnv(base) // env > file (only fields env actually sets)
+	if err != nil {
+		return Datasource{}, err
+	}
+	base = merge(base, overrides) // flag > env
+	base = applyDefaults(base)    // default for still-zero fields
 	return base, nil
 }
 
@@ -165,14 +172,16 @@ func fileBase(cfg *Config, name string) (Datasource, error) {
 }
 
 // applyEnv overlays env vars that are actually set (os.LookupEnv).
-func applyEnv(ds Datasource) Datasource {
+func applyEnv(ds Datasource) (Datasource, error) {
 	if v, ok := os.LookupEnv("MYSQL_HOST"); ok {
 		ds.Host = v
 	}
 	if v, ok := os.LookupEnv("MYSQL_PORT"); ok {
-		if n, err := strconv.Atoi(v); err == nil {
-			ds.Port = n
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Datasource{}, fmt.Errorf("invalid MYSQL_PORT %q: %w", v, err)
 		}
+		ds.Port = n
 	}
 	if v, ok := os.LookupEnv("MYSQL_USER"); ok {
 		ds.User = v
@@ -190,9 +199,11 @@ func applyEnv(ds Datasource) Datasource {
 		ds.SSLCA = v
 	}
 	if v, ok := os.LookupEnv("MYSQL_CONNECT_TIMEOUT"); ok {
-		if n, err := strconv.Atoi(v); err == nil {
-			ds.ConnectTimeout = n
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Datasource{}, fmt.Errorf("invalid MYSQL_CONNECT_TIMEOUT %q: %w", v, err)
 		}
+		ds.ConnectTimeout = n
 	}
 	if v, ok := os.LookupEnv("MYSQL_SQL_MODE"); ok {
 		ds.SQLMode = v
@@ -206,7 +217,7 @@ func applyEnv(ds Datasource) Datasource {
 	if v, ok := os.LookupEnv("MYSQL_AUTH_PLUGIN"); ok {
 		ds.AuthPlugin = v
 	}
-	return ds
+	return ds, nil
 }
 
 // applyDefaults fills defaults for still-zero fields.
@@ -276,3 +287,6 @@ func merge(base, over Datasource) Datasource {
 
 // ErrUnknownDatasource is returned when a named datasource cannot be found.
 var ErrUnknownDatasource = errors.New("unknown datasource")
+
+// ErrPlaceholderUnset is returned when a password ${ENV} placeholder references an unset env var.
+var ErrPlaceholderUnset = errors.New("placeholder env var unset")
