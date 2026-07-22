@@ -16,6 +16,9 @@ import (
 
 // SuccessJSON renders the success envelope.
 func SuccessJSON(r result.Result, meta map[string]any) string {
+	if meta == nil {
+		meta = map[string]any{}
+	}
 	env := map[string]any{
 		"success": true,
 		"data": map[string]any{
@@ -25,7 +28,10 @@ func SuccessJSON(r result.Result, meta map[string]any) string {
 		"rows_affected": r.RowsAffected,
 		"meta":          meta,
 	}
-	b, _ := json.Marshal(env)
+	b, err := json.Marshal(env)
+	if err != nil {
+		return ErrorJSON("FORMAT_ERROR", "json marshal failed: "+err.Error())
+	}
 	return string(b)
 }
 
@@ -38,7 +44,10 @@ func ErrorJSON(code, message string) string {
 			"message": message,
 		},
 	}
-	b, _ := json.Marshal(env)
+	b, err := json.Marshal(env)
+	if err != nil {
+		return `{"success":false,"error":{"code":"FORMAT_ERROR","message":"marshal failed"}}`
+	}
 	return string(b)
 }
 
@@ -69,6 +78,7 @@ func cellString(v any) string {
 func formatDelimited(r result.Result, sep string) (string, error) {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
+	w.Comma = []rune(sep)[0]
 	if err := w.Write(r.Columns); err != nil {
 		return "", err
 	}
@@ -82,10 +92,6 @@ func formatDelimited(r result.Result, sep string) (string, error) {
 		}
 	}
 	w.Flush()
-	if sep == "\t" {
-		// csv.Writer always uses comma; rewrite to tab.
-		return strings.ReplaceAll(buf.String(), ",", "\t"), nil
-	}
 	return buf.String(), nil
 }
 
@@ -96,10 +102,9 @@ func formatTable(r result.Result) string {
 	for _, row := range r.Rows {
 		cells := make([]string, len(row))
 		for i, c := range row {
-			if c == nil {
+			cells[i] = cellString(c)
+			if cells[i] == "" {
 				cells[i] = "NULL"
-			} else {
-				cells[i] = fmt.Sprintf("%v", c)
 			}
 		}
 		tw.Append(cells)

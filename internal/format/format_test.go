@@ -2,12 +2,12 @@ package format
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/AllenMuu/mysql-cli/internal/result"
 	"github.com/stretchr/testify/assert"
 )
+
 
 func TestCSV(t *testing.T) {
 	r := result.Result{Columns: []string{"id", "name"}, Rows: [][]any{{1, "a"}, {nil, "b"}}}
@@ -67,7 +67,15 @@ func TestUnknownFormatErrors(t *testing.T) {
 
 func TestCSVCommaEscaping(t *testing.T) {
 	r := result.Result{Columns: []string{"s"}, Rows: [][]any{{"a,b"}}}
-	out, _ := Format(r, "csv")
+	out, err := Format(r, "csv")
+	assert.NoError(t, err)
 	assert.Contains(t, out, `"a,b"`)
-	_ = strings.TrimSpace
+}
+
+func TestTSVCommaInValue(t *testing.T) {
+	r := result.Result{Columns: []string{"s"}, Rows: [][]any{{"a,b"}}}
+	out, err := Format(r, "tsv")
+	assert.NoError(t, err)
+	assert.Contains(t, out, "a,b")
+	assert.NotContains(t, out, "a\tb")
 }
