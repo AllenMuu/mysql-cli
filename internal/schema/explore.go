@@ -2,7 +2,6 @@ package schema
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/AllenMuu/mysql-cli/internal/conn"
 	"github.com/AllenMuu/mysql-cli/internal/result"
@@ -62,7 +61,10 @@ func padRow(section string, row []any, width int) []any {
 	out[0] = section
 	for i := 0; i < width; i++ {
 		if i < len(row) {
-			out[i+1] = fmt.Sprintf("%v", row[i])
+			// Preserve the original value (nil/int/string) so the format
+			// layer renders NULL (table) / null (JSON) and numbers correctly,
+			// instead of stringifying via fmt.Sprintf.
+			out[i+1] = row[i]
 		} else {
 			out[i+1] = ""
 		}

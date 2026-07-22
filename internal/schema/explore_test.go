@@ -49,7 +49,7 @@ func TestAnalyzeCombinesSchemaAndSample(t *testing.T) {
 	// Two sections: schema columns then sample columns.
 	assert.Equal(t, 2, len(r.Rows))
 	assert.Equal(t, "id", r.Rows[0][1]) // schema row: section,col,...
-	assert.Equal(t, "1", r.Rows[1][1])  // sample row
+	assert.EqualValues(t, 1, r.Rows[1][1]) // sample row (int preserved)
 }
 
 func TestAnalyzeTruncatesWideSample(t *testing.T) {
@@ -65,7 +65,7 @@ func TestAnalyzeTruncatesWideSample(t *testing.T) {
 		assert.Equal(t, 6, len(row))
 	}
 	assert.Equal(t, "sample", r.Rows[1][0])
-	assert.Equal(t, "5", r.Rows[1][5])
+	assert.EqualValues(t, 5, r.Rows[1][5])
 }
 
 func TestAnalyzeSampleMoreThanFiveRows(t *testing.T) {
