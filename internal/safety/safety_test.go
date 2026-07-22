@@ -40,6 +40,24 @@ func TestCheckDMLWithWriteAllowed(t *testing.T) {
 	assert.True(t, d.Allowed)
 }
 
+func TestCheckUnknownRequiresWrite(t *testing.T) {
+	_, err := Check("CALL foo()", CheckOptions{})
+	assert.ErrorIs(t, err, ErrReadonlyViolation)
+
+	_, err = Check("SET @x=1", CheckOptions{})
+	assert.ErrorIs(t, err, ErrReadonlyViolation)
+
+	d, err := Check("CALL foo()", CheckOptions{Write: true})
+	assert.NoError(t, err)
+	assert.True(t, d.Allowed)
+	assert.Equal(t, CategoryUnknown, d.Category)
+
+	d, err = Check("SET @x=1", CheckOptions{Write: true})
+	assert.NoError(t, err)
+	assert.True(t, d.Allowed)
+	assert.Equal(t, CategoryUnknown, d.Category)
+}
+
 func TestCheckDDLRequiresDDLFlag(t *testing.T) {
 	_, err := Check("DROP TABLE t", CheckOptions{Write: true, Yes: true})
 	assert.ErrorIs(t, err, ErrDDLRequiresWrite)

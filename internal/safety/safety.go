@@ -94,12 +94,18 @@ func IsDestructive(sql string) bool {
 	return false
 }
 
-// Check enforces the gate: read always allowed; DML needs Write and, if
-// destructive, Yes; DDL needs Write+DDL and, if destructive, Yes.
+// Check enforces the gate: read always allowed; unknown statements need Write;
+// DML needs Write and, if destructive, Yes; DDL needs Write+DDL and, if
+// destructive, Yes.
 func Check(sql string, opts CheckOptions) (*Decision, error) {
 	cat := Classify(sql)
 	switch cat {
-	case CategoryRead, CategoryUnknown:
+	case CategoryRead:
+		return &Decision{Allowed: true, Category: cat}, nil
+	case CategoryUnknown:
+		if !opts.Write {
+			return nil, ErrReadonlyViolation
+		}
 		return &Decision{Allowed: true, Category: cat}, nil
 	case CategoryDML:
 		if !opts.Write {
