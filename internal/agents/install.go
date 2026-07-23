@@ -126,3 +126,114 @@ func installCursor(opts Options) ([]string, error) {
 	}
 	return paths, nil
 }
+
+// writeMerged reads existing file at path (if any), replaces/appends the marked
+// block with the merged skill bodies, and writes it back. No-op body on DryRun
+// still records the path. Returns the path written.
+func writeMerged(opts Options, path string) (string, error) {
+	merged, err := mergedBody(opts.FS, opts.Names)
+	if err != nil {
+		return path, err
+	}
+	existing, _ := os.ReadFile(path) // absent is OK
+	content := MergeInstructionFile(string(existing), merged)
+	if err := writeIfNotDryRun(opts, path, content); err != nil {
+		return path, err
+	}
+	return path, nil
+}
+
+// installCodex writes the merged block to <proj>/AGENTS.md and ~/.codex/instructions.md.
+func installCodex(opts Options) ([]string, error) {
+	var paths []string
+	if opts.ProjectDir != "" {
+		p, err := writeMerged(opts, filepath.Join(opts.ProjectDir, "AGENTS.md"))
+		paths = append(paths, p)
+		if err != nil {
+			return paths, err
+		}
+	}
+	if !opts.NoGlobal {
+		p, err := writeMerged(opts, filepath.Join(opts.Home, ".codex", "instructions.md"))
+		paths = append(paths, p)
+		if err != nil {
+			return paths, err
+		}
+	}
+	return paths, nil
+}
+
+// installOpenCode writes the merged block to <proj>/.opencode/instructions.md
+// and ~/.config/opencode/instructions.md.
+func installOpenCode(opts Options) ([]string, error) {
+	var paths []string
+	if opts.ProjectDir != "" {
+		p, err := writeMerged(opts, filepath.Join(opts.ProjectDir, ".opencode", "instructions.md"))
+		paths = append(paths, p)
+		if err != nil {
+			return paths, err
+		}
+	}
+	if !opts.NoGlobal {
+		p, err := writeMerged(opts, filepath.Join(opts.Home, ".config", "opencode", "instructions.md"))
+		paths = append(paths, p)
+		if err != nil {
+			return paths, err
+		}
+	}
+	return paths, nil
+}
+
+// installCopilot is project-only: writes <proj>/.github/copilot-instructions.md.
+// Returns ErrProjectOnly if ProjectDir is empty.
+func installCopilot(opts Options) ([]string, error) {
+	if opts.ProjectDir == "" {
+		return nil, ErrProjectOnly
+	}
+	p, err := writeMerged(opts, filepath.Join(opts.ProjectDir, ".github", "copilot-instructions.md"))
+	if err != nil {
+		return []string{p}, err
+	}
+	return []string{p}, nil
+}
+
+// installWindsurf writes the merged block to <proj>/.windsurfrules and ~/.windsurfrules.
+func installWindsurf(opts Options) ([]string, error) {
+	var paths []string
+	if opts.ProjectDir != "" {
+		p, err := writeMerged(opts, filepath.Join(opts.ProjectDir, ".windsurfrules"))
+		paths = append(paths, p)
+		if err != nil {
+			return paths, err
+		}
+	}
+	if !opts.NoGlobal {
+		p, err := writeMerged(opts, filepath.Join(opts.Home, ".windsurfrules"))
+		paths = append(paths, p)
+		if err != nil {
+			return paths, err
+		}
+	}
+	return paths, nil
+}
+
+// installAider writes the merged block to <proj>/.aider.instructions.md and
+// ~/.aider.instructions.md. (aider has a global install path, unlike copilot.)
+func installAider(opts Options) ([]string, error) {
+	var paths []string
+	if opts.ProjectDir != "" {
+		p, err := writeMerged(opts, filepath.Join(opts.ProjectDir, ".aider.instructions.md"))
+		paths = append(paths, p)
+		if err != nil {
+			return paths, err
+		}
+	}
+	if !opts.NoGlobal {
+		p, err := writeMerged(opts, filepath.Join(opts.Home, ".aider.instructions.md"))
+		paths = append(paths, p)
+		if err != nil {
+			return paths, err
+		}
+	}
+	return paths, nil
+}

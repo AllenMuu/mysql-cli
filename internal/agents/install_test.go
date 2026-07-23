@@ -115,3 +115,50 @@ func TestInstallCursor_NoGlobal(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(home, ".cursor", "rules"))
 	assert.NotEmpty(t, paths)
 }
+
+func TestInstallCodex_MergesIdempotently(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	o := baseOpts(home, proj)
+	_, err := installCodex(o)
+	require.NoError(t, err)
+	p := filepath.Join(proj, "AGENTS.md")
+	first, _ := os.ReadFile(p)
+	// re-run: content stable
+	_, err = installCodex(o)
+	require.NoError(t, err)
+	second, _ := os.ReadFile(p)
+	assert.Equal(t, string(first), string(second))
+	assert.Contains(t, string(first), beginMarker)
+	assert.Contains(t, string(first), "## mysql-cli skill: mysql-query")
+	assert.FileExists(t, filepath.Join(home, ".codex", "instructions.md"))
+}
+
+func TestInstallCopilot_ProjectOnly_NeedsProjectDir(t *testing.T) {
+	home := t.TempDir()
+	_, err := installCopilot(baseOpts(home, ""))
+	assert.ErrorIs(t, err, ErrProjectOnly)
+}
+
+func TestInstallCopilot_ProjectInstall(t *testing.T) {
+	proj := t.TempDir()
+	_, err := installCopilot(baseOpts(t.TempDir(), proj))
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(proj, ".github", "copilot-instructions.md"))
+}
+
+func TestInstallWindsurf_GlobalAndProject(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	_, err := installWindsurf(baseOpts(home, proj))
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(home, ".windsurfrules"))
+	assert.FileExists(t, filepath.Join(proj, ".windsurfrules"))
+}
+
+func TestInstallAider_GlobalWithoutProjectDir(t *testing.T) {
+	home := t.TempDir()
+	_, err := installAider(baseOpts(home, ""))
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(home, ".aider.instructions.md"))
+}
