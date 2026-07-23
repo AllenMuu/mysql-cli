@@ -1,0 +1,25 @@
+{
+  "name": "@allenmuu/mysql-cli",
+  "version": "0.0.0",
+  "description": "One-line install of mysql-cli (Go binary) for AI agents: npx @allenmuu/mysql-cli install",
+  "bin": {
+    "mysql-cli": "bin/mysql-cli.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "install.js",
+    "bin/mysql-cli.js",
+    "README.md"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AllenMuu/mysql-cli.git"
+  }
+}

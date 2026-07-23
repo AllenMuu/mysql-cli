@@ -2,3 +2,9 @@
 *.test
 *.out
 /mysql-cli
+# npx distribution (Plan 2)
+/dist/npm/bin/mysql-cli
+/dist/npm/bin/mysql-cli.exe
+/dist/npm/node_modules/
+/dist/npm/package-lock.json
+/.goreleaser-dist/
