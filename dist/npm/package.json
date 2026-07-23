@@ -7,7 +7,7 @@
   },
   "scripts": {
     "postinstall": "node install.js",
-    "test": "node --test test/"
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18"
