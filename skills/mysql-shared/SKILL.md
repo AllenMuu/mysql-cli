@@ -1,11 +1,10 @@
 ---
-name: mysql
-description: >
-  Query MySQL and explore schema with mysql-cli. Use when user asks about
-  database queries, table structures, MySQL data, running SQL, inspecting rows,
-  listing tables/databases, or executing transactions/DML/DDL. Defaults to
-  read-only JSON output with stable exit codes designed to be parsed by agents.
+name: mysql-shared
 version: 1.0.0
+description: >
+  mysql-cli 共享规则:配置与数据源、全局 flag、安全模型、稳定退出码、错误自修复、输出格式。
+  使用 mysql-query 或 mysql-schema 技能前 MUST 先用 Read 加载本技能。也在用户询问
+  mysql-cli 配置、连接失败、只读/权限错误、退出码含义、输出格式时直接使用。
 metadata:
   binary: mysql-cli
   config_file: ~/.config/mysql-cli/config.toml
@@ -16,7 +15,10 @@ metadata:
   replaces: designcomputer/mysql_mcp_server
 ---
 
-# mysql-cli Skill / mysql-cli 技能
+# mysql-cli 共享规则 / mysql-cli Shared Rules
+
+> **CRITICAL**: 本技能被 `mysql-query` 与 `mysql-schema` 引用。使用任一技能前,先用 Read
+> 工具加载本文件。/ Referenced by `mysql-query` and `mysql-schema`; read this before either.
 
 `mysql-cli` is a Go CLI that lets any shell-capable AI agent query MySQL without
 an MCP runtime. It is a drop-in replacement for `designcomputer/mysql_mcp_server`,
@@ -32,28 +34,6 @@ only for human debugging.
 > with `go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest` or point
 > commands at the built binary. / 假设 `mysql-cli` 已在 `PATH` 中;否则用
 > `go install` 安装或指向编译产物。
-
----
-
-## Trigger Conditions / 触发条件
-
-Use this skill when the user asks about any of the following:
-
-- Database queries or running SQL (`SELECT`, `INSERT`, `UPDATE`, `DELETE`)
-- Table structures, columns, types, indexes (`schema`, `analyze`)
-- Listing tables or databases (`tables`, `databases`, `explore`)
-- Sampling or reading rows from a table (`sample`, `read`)
-- Running multiple statements atomically (`txn`)
-- Anything involving MySQL data and a shell-capable agent
-
-当用户提出以下需求时使用本技能:
-
-- 数据库查询或运行 SQL(`SELECT`/`INSERT`/`UPDATE`/`DELETE`)
-- 表结构、列、类型、索引(`schema`、`analyze`)
-- 列出库表(`tables`、`databases`、`explore`)
-- 表数据采样或读取(`sample`、`read`)
-- 多语句原子事务(`txn`)
-- 任何涉及 MySQL 数据且 agent 能跑 shell 的场景
 
 ---
 
@@ -86,12 +66,9 @@ A lightweight probe via the read-only `databases` command (no table scan):
 mysql-cli databases -f json
 ```
 
-- Exit `0` + `{"success":true,...}` -> reachable, proceed.
-  / 退出 `0` 且 `success:true` -> 可达,继续。
-- Exit `2` (CONN_FAILED) -> check host/port/credentials/SSH tunnel.
-  / 退出 `2` -> 检查 host/port/凭据/SSH 隧道。
-- Exit `10` (CONFIG_ERROR) -> check `config.toml` syntax or datasource name.
-  / 退出 `10` -> 检查 `config.toml` 语法或数据源名。
+- Exit `0` + `{"success":true,...}` -> reachable, proceed. / 退出 `0` 且 `success:true` -> 可达,继续。
+- Exit `2` (CONN_FAILED) -> check host/port/credentials/SSH tunnel. / 退出 `2` -> 检查 host/port/凭据/SSH 隧道。
+- Exit `10` (CONFIG_ERROR) -> check `config.toml` syntax or datasource name. / 退出 `10` -> 检查 `config.toml` 语法或数据源名。
 
 ### 3. (Optional) Pick a datasource / 选择数据源
 
@@ -102,7 +79,7 @@ If the config defines multiple `[datasource.<name>]` profiles, select one with
 
 ---
 
-## Commands Reference / 命令参考
+## Global Flags / 全局 flag
 
 All commands share global flags: `-d/--datasource`, `-f/--format` (default
 `json`), `--write`, `--ddl`, `--yes`, `--limit`, `--timeout` (default `30s`),
@@ -111,103 +88,6 @@ All commands share global flags: `-d/--datasource`, `-f/--format` (default
 所有命令共享全局 flag:`-d/--datasource`、`-f/--format`(默认 `json`)、
 `--write`、`--ddl`、`--yes`、`--limit`、`--timeout`(默认 `30s`)、`--config`,
 以及连接覆盖 `--host/--port/--user/--password/--db`。
-
-### Query / 查询
-
-| Command / 命令 | Description / 说明 |
-| --- | --- |
-| `mysql-cli query "<sql>"` | Run one SQL statement. Read by default; `--write` for DML, `--write --ddl` for DDL. / 运行单条 SQL。默认只读;DML 需 `--write`,DDL 需 `--write --ddl`。 |
-
-- Read queries route through `QueryContext` and return rows.
-- DML/DDL route through a transactional write path and return `rows_affected`.
-- Do **not** send write SQL without `--write`; the driver rejects writes in the
-  read path and you get exit `3`.
-- 读查询走 `QueryContext` 返回行;DML/DDL 走事务写入路径返回 `rows_affected`。
-  不要在无 `--write` 时发写语句,否则退出 `3`。
-
-### Transaction / 事务
-
-| Command / 命令 | Description / 说明 |
-| --- | --- |
-| `mysql-cli txn "<sql1>" ["<sql2>"...]` | Run multiple statements in one atomic transaction. / 在单个原子事务中运行多条语句。 |
-
-- Use this whenever you have more than one statement - `query` rejects
-  multi-statement input (exit `7`).
-- Needs `--write` (and `--ddl`/`--yes` as appropriate) for any write inside.
-  / 多语句必须走 `txn`(`query` 会以退出 `7` 拒绝)。写操作仍需对应安全 flag。
-
-### Schema Exploration / 结构探索
-
-All read-only; no safety flags needed. Identifiers are validated against
-`^[a-zA-Z0-9_$]+$` before any SQL is built.
-
-全部只读,无需安全 flag。所有标识符在拼 SQL 前按 `^[a-zA-Z0-9_$]+$` 校验。
-
-| Command / 命令 | Args | Description / 说明 |
-| --- | --- | --- |
-| `mysql-cli databases` | (none) | List databases. / 列出数据库。 |
-| `mysql-cli tables [db]` | `[db]` | List tables (current db, or given db). / 列出表(当前库或指定库)。 |
-| `mysql-cli schema [table]` | `[table]` | Table structure, or whole database when omitted. / 表结构;省略则整库。 |
-| `mysql-cli sample <table>` | `<table>` | Sample rows. `-n N` (default 5, max 20). / 采样行,`-n N`(默认 5,上限 20)。 |
-| `mysql-cli read <table>` | `<table>` | First 100 rows. / 前 100 行。 |
-| `mysql-cli explore` | (none) | Database + table overview. / 库表总览。 |
-| `mysql-cli analyze <table>` | `<table>` | Schema + sample in one shot. / 一次拿到结构 + 采样。 |
-
-### Write / 写入
-
-Writes are gated by safety flags (see [Security Model](#security-model--安全模型)).
-Destructive ops additionally need `--yes`.
-
-写操作受安全 flag 闸门控制(见[安全模型](#security-model--安全模型)),
-破坏性操作另需 `--yes`。
-
-| Intent / 意图 | Command / 命令 |
-| --- | --- |
-| DML (INSERT/UPDATE/DELETE) | `mysql-cli query "<dml>" --write` |
-| DDL (CREATE/ALTER) | `mysql-cli query "<ddl>" --write --ddl` |
-| DROP / TRUNCATE, or UPDATE/DELETE without WHERE | `mysql-cli query "<sql>" --write --yes` (add `--ddl` for DDL-class drops) |
-| Multi-statement atomic write | `mysql-cli txn "<s1>" "<s2>" --write [--ddl] [--yes]` |
-
-> Safety flags at a glance / 安全 flag 速查:
-> `--write` unlocks DML · `--ddl` unlocks DDL (**requires** `--write`) ·
-> `--yes` confirms destructive ops. / `--write` 放行 DML · `--ddl` 放行 DDL
-> (需配合 `--write`) · `--yes` 确认破坏性操作。
-
----
-
-## Typical Workflow / 典型工作流
-
-The safe path is **explore -> read -> write**. Always confirm schema and row
-shape before writing, so DML targets the right columns and `WHERE` clauses.
-
-安全路径是**探索 -> 读取 -> 写入**。写之前先确认结构和数据形态,
-确保 DML 命中正确列与 `WHERE` 条件。
-
-```bash
-# 1. Orient: what databases/tables exist? / 定向:有哪些库表?
-mysql-cli explore -f json
-
-# 2. Inspect a table's structure + a data sample in one call. / 一次看结构 + 采样
-mysql-cli analyze users -f json
-
-# 3. Precise read with a limit (always bound large results). / 带上限精确读取
-mysql-cli query "SELECT id, email FROM users WHERE status = 'active' LIMIT 50" -f json
-
-# 4. Validate the WHERE clause on read-only data first. / 先用只读验证 WHERE
-mysql-cli query "SELECT COUNT(*) FROM users WHERE status = 'pending'" -f json
-
-# 5. Apply the write with the matching safety flag. / 用对应安全 flag 执行写入
-mysql-cli query "UPDATE users SET status = 'active' WHERE status = 'pending'" --write -f json
-
-# 6. Multi-step change atomically. / 多步变更走原子事务
-mysql-cli txn \
-  "INSERT INTO audit_log(action) VALUES ('activate_users')" \
-  "UPDATE users SET status = 'active' WHERE status = 'pending'" \
-  --write -f json
-```
-
-- DDL example: `mysql-cli query "ALTER TABLE users ADD COLUMN nickname VARCHAR(64)" --write --ddl`
-- Destructive example: `mysql-cli query "TRUNCATE TABLE staging_imports" --write --yes`
 
 ---
 
@@ -241,7 +121,7 @@ strict envelope.
 | Field / 字段 | Meaning / 含义 |
 | --- | --- |
 | `success` | `false` on error. / 失败为 `false`。 |
-| `error.code` | Stable machine-readable code (see [Error Handling](#error-handling--错误自修复)). / 稳定的机器可读码(见错误自修复)。 |
+| `error.code` | Stable machine-readable code (see Error Handling). / 稳定的机器可读码(见错误自修复)。 |
 | `error.message` | Human-readable detail. / 人类可读详情。 |
 
 Switch human-readable rendering with `-f table`, `-f csv`, or `-f tsv`. In
@@ -293,6 +173,11 @@ flag never silently mutates data.
 | DDL (`CREATE`/`ALTER`/`DROP`/...) | `--write --ddl` |
 | Destructive (`DROP`/`TRUNCATE`, `UPDATE`/`DELETE` without `WHERE`) | `--yes` (+ `--write`, + `--ddl` for DDL-class) |
 
+> Safety flags at a glance / 安全 flag 速查:
+> `--write` unlocks DML · `--ddl` unlocks DDL (**requires** `--write`) ·
+> `--yes` confirms destructive ops. / `--write` 放行 DML · `--ddl` 放行 DDL
+> (需配合 `--write`) · `--yes` 确认破坏性操作。
+
 Additional guarantees / 额外保证:
 
 - **Identifier allowlist / 标识符白名单**: table/db names must match
@@ -325,9 +210,6 @@ Additional guarantees / 额外保证:
 - **Validate WHERE on reads first / 先只读验证 WHERE**: before an `UPDATE`/
   `DELETE`, run the same `WHERE` as a `SELECT COUNT(*)` to confirm scope.
   / `UPDATE`/`DELETE` 前用相同 `WHERE` 跑 `SELECT COUNT(*)` 确认范围。
-- **One statement per `query` / `query` 只放单条**: split multi-statement work
-  into `txn` for atomicity; never chain statements in `query`.
-  / 多语句拆到 `txn` 保证原子性,`query` 内不要串语句。
 - **Match flags to intent / flag 对齐意图**: DML -> `--write`; DDL ->
   `--write --ddl`; destructive -> add `--yes`. Don't add `--yes` speculatively.
   / DML 加 `--write`;DDL 加 `--write --ddl`;破坏性再加 `--yes`,勿盲目加 `--yes`。

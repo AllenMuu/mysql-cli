@@ -100,6 +100,7 @@ func newRootCmd(g *Globals) *cobra.Command {
 		newReadCmd(g),
 		newExploreCmd(g),
 		newAnalyzeCmd(g),
+		newSkillCmd(),
 	)
 	// No subcommand -> interactive REPL (human debug; not the agent path).
 	root.RunE = func(cmd *cobra.Command, args []string) error {

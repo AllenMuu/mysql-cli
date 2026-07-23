@@ -1,0 +1,24 @@
+name: skill-format-check
+on:
+  push:
+    paths:
+      - "skills/**"
+      - "scripts/skill-format-check/**"
+      - ".github/workflows/skill-format-check.yml"
+  pull_request:
+    paths:
+      - "skills/**"
+      - "scripts/skill-format-check/**"
+      - ".github/workflows/skill-format-check.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate SKILL.md frontmatter
+        run: ./scripts/skill-format-check.sh skills/
+
+      - name: Self-test (good/bad fixtures)
+        run: ./scripts/skill-format-check/test.sh

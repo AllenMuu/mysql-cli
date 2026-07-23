@@ -1,214 +1,388 @@
-# lark-cli (yjwong/lark-cli) 调研报告
+# larksuite/cli 调研报告
+
+> 调研对象：飞书官方 CLI [`larksuite/cli`](https://github.com/larksuite/cli)（npm 包 `@larksuite/cli`，二进制名 `lark-cli`）。
+> 替代之前误调的第三方 `yjwong/lark-cli`。本报告重点拆解其对各 AI Agent 的对接机制与 skill 治理体系，并给出 mysql-cli 的可执行复用清单。
+
+---
 
 ## 1. 项目概况
 
 | 维度 | 内容 |
 |------|------|
-| 仓库 | https://github.com/yjwong/lark-cli |
-| 语言 | Go |
-| Stars | ~53 |
-| 定位 | Lark/Feishu API 的 CLI 工具，专为 Claude Code 等 AI agent 设计 |
-| 核心动机 | 官方 Lark MCP server 的 tool 返回过于冗长，token 效率低；改为 CLI 返回紧凑 JSON |
+| 仓库 | https://github.com/larksuite/cli |
+| 维护方 | 飞书官方 larksuite 团队 |
+| 语言 | Go（核心） + Node.js（npm 分发） |
+| 许可证 | MIT |
+| npm 包 | `@larksuite/cli` |
+| 二进制名 | `lark-cli` |
+| 命令规模 | 200+ 命令，覆盖 18 个业务域（Calendar / IM / Docs / Drive / Base / Sheets / Slides / Mail / Tasks / Wiki / Meetings / Approval / OKR 等） |
+| Agent Skills | 26 个内置 Skill（位于 `skills/`，含 `lark-shared` 共享规则与 `lark-skill-maker` 元工具） |
+| 定位 | "built for humans and AI Agents" —— 人机双目标 |
+| 构建要求 | 源码构建需 Go ≥1.23 + Python 3；npm 安装仅需 Node.js |
+| 安装 | `npx @larksuite/cli@latest install` |
+| Skills 安装 | `npx skills add larksuite/cli -y -g`（依赖通用 `skills` 包管理器，非自研脚本） |
 
-**设计理念与 mysql-cli 高度相似**：
-- Agent 是首要调用方（默认 JSON 输出）
-- 替代 MCP server，无需 MCP runtime
-- 命令行子命令组织功能
-- 紧凑、可编程的输出格式
-
----
-
-## 2. 安装到 AI Agents 的方式
-
-### 2.1 技能目录分发（skills/）
-
-lark-cli 在项目根目录提供 `skills/` 文件夹，内含 8 个预置 skill：
-
-```
-skills/
-├── bitable/      → SKILL.md
-├── calendar/     → SKILL.md
-├── contacts/     → SKILL.md
-├── documents/    → SKILL.md
-├── email/        → SKILL.md
-├── messages/     → SKILL.md
-├── minutes/      → SKILL.md
-└── sheets/       → SKILL.md
-```
-
-**安装方式**（README 明确说明）：
-
-```bash
-# 项目级（推荐）
-cp -r skills/* /path/to/your/project/.claude/skills/
-
-# 用户级
-cp -r skills/* ~/.claude/skills/
-```
-
-安装后，Claude Code 会自动读取这些 SKILL.md，在对应场景下调用 `lark` 命令。
-
-### 2.2 运行环境假设
-
-- 假设 `lark` 二进制在 PATH 中；否则需编辑 SKILL.md 中的路径
-- 通过 `LARK_CONFIG_DIR` 环境变量指定配置目录（默认 `~/.lark/`）
-- 配置文件：`.lark/config.yaml`
+**核心理念**：Agent-Native Design。每条命令都经过真实 Agent 测试，强调精简参数、智能默认、结构化输出，最大化 Agent 调用成功率。
 
 ---
 
-## 3. Skill 定义模式深度分析
+## 2. 对接各个 AI Agent 的核心机制
 
-### 3.1 文件结构
+larksuite/cli 的 agent 友好性不是单点优化，而是从分发、格式、加载、版本同步到质量门禁的一整套机制。以下逐项展开。
 
-每个 skill 只有一个 `SKILL.md`，采用 **YAML frontmatter + Markdown** 格式：
+### 2.1 标准 Skill 格式（YAML frontmatter + Markdown）
+
+每个 skill 采用 Anthropic 开放 Skill 规范的 frontmatter 结构：
 
 ```yaml
 ---
-name: calendar
-description: Manage Lark calendar - view schedule, create/update/delete events, ...
+name: lark-calendar
+version: 1.0.0
+description: "..."
+metadata:
+  requires:
+    bins: ["lark-cli"]
+  cliHelp: "lark-cli calendar --help"
 ---
 ```
 
-`description` 字段极其重要：它告诉 Claude Code **何时应该使用这个 skill**（触发条件）。
+- `name` / `version` / `description` 是 agent 识别与加载的标准字段；
+- `metadata.requires.bins` 声明运行时依赖的二进制；
+- `metadata.cliHelp` 指向该域的 `--help`，让 agent 自助补全。
 
-### 3.2 内容组织模式
+这种格式不绑定任何特定 agent 平台，Cursor / Codex / Claude Code 等都能解析，是跨 agent 兼容的基础。
 
-| 板块 | 作用 | 示例 |
-|------|------|------|
-| **Running Commands** | 如何调用 CLI、环境变量 | `lark cal <command>` |
-| **Before Running** | 前置检查（如时间、认证） | `date '+%Y-%m-%d'`、`lark auth status` |
-| **Commands Reference** | 完整命令列表及参数 | 按子命令分组，带 flag 说明 |
-| **Output Formats** | 输出结构示例 | JSON 字段解释 |
-| **Error Handling** | 常见错误码及修复 | `AUTH_ERROR` → `lark auth login` |
-| **Required Permissions** | 权限/scope 说明 | 如何增量添加权限 |
-| **Typical Workflow** | 典型操作流 | 1. sync → 2. search → 3. show |
-| **Best Practices / EA Best Practices** | Agent 行为指导 | 调度前检查冲突、维护缓冲时间 |
-| **Integration** | 与其他 skill 联动 | calendar + contacts 联查 |
+### 2.2 通用安装：`npx skills add` 而非自研脚本
 
-### 3.3 设计亮点
+```bash
+npx skills add larksuite/cli -y -g
+```
 
-1. **触发条件明确**：`description` 中包含 "Use when user asks about..."，让 agent 知道何时加载该 skill
-2. **前置检查引导**：calendar skill 要求 agent **总是先检查当前时间**，避免时区/日期错误
-3. **错误自修复**：每个 skill 都列出常见错误及对应的修复命令，agent 可自动重试
-4. **工作流封装**：不只罗列命令，而是给出 "典型工作流"（如邮件：status → sync → search → show）
-5. **跨 skill 联动**：calendar skill 说明如何与 contacts skill 联用（查参会人信息）
-6. **EA Best Practices**：针对特定领域的 agent 行为准则（如日程管理中的缓冲时间、过载检测）
+依赖通用的 `skills` 包管理器（业界共享，非飞书自研），避免每个 CLI 各写一套 `install-skills.sh`。这是与 mysql-cli 当前硬编码脚本的关键差异点。
+
+### 2.3 shared skill 自动加载（`skills/lark-shared/SKILL.md`）
+
+`lark-shared` 是所有 skill 的"公共契约"，承载：
+
+- 配置初始化流程（`lark-cli config init`）
+- 认证 split-flow（`--no-wait` 发起 + `--device-code` 完成）
+- 身份切换（`--as user` / `--as bot`）与权限不足处理
+- 业务域授权（`--domain`）
+- `_notice` 抑制规则
+- URL 转发与二维码生成的强约束
+
+每个具体 skill 模板顶部强制声明：
+
+> **CRITICAL - 开始前 MUST 先用 Read 工具读取 `../lark-shared/SKILL.md`**
+
+这是"DRY + 单点真相"的范例：安全/认证/错误规则只维护一份，所有子 skill 通过引用复用，避免散落漂移。
+
+### 2.4 Skill 模板化（`skill-template/skill-template.md`）
+
+提供带 `{{变量}}` 占位的标准模板，新增 skill 时填充变量即可：
+
+```markdown
+---
+name: lark-{{project}}
+version: {{meta_version}}
+description: "{{meta_description}}"
+metadata:
+  requires:
+    bins: ["lark-cli"]
+  cliHelp: "lark-cli {{service}} --help"
+---
+
+# {{service}} ({{version}})
+
+**CRITICAL - 开始前 MUST 先用 Read 工具读取 [`../lark-shared/SKILL.md`](../lark-shared/SKILL.md)**
+{{introduction}}
+{{#shortcuts}} ... {{/shortcuts}}
+{{#actions}} ... {{/actions}}
+```
+
+模板化保证所有 skill 的 frontmatter、章节结构、shared 引用一致。
+
+### 2.5 skillscheck 同步检查（`internal/skillscheck/`）
+
+CLI 内置的"已装 skill 版本是否匹配当前 CLI 版本"检查，由 5 个文件组成：
+
+| 文件 | 职责 |
+|------|------|
+| `check.go` | `Init(currentVersion)` 在 CLI 启动前同步检查 |
+| `sync.go` | 读取/写入本地同步状态 |
+| `state.go` | 本地 state 文件管理 |
+| `skip.go` | 跳过规则（CI 环境 / DEV 构建 / 非 release semver / `LARKSUITE_CLI_NO_SKILLS_NOTIFIER` opt-out） |
+| `notice.go` | `StaleNotice` 生成与展示 |
+
+关键设计（核实自 `check.go` 源码）：
+
+- **零网络、零子进程**：仅读本地 state 文件，开销极小；
+- 在 `cmd/root.go` 的 `rootCmd.Execute()` 前调用，每次 CLI 启动都跑，但通过 `shouldSkip` 在 CI/DEV 等场景跳过；
+- 版本不匹配时生成 `StaleNotice`，通过 `_notice.skills` 字段提示 agent，不阻断命令执行。
+
+### 2.6 质量门禁（`internal/qualitygate/skillscan/` + `rules/skillquality.go`）
+
+`internal/qualitygate/` 是完整的质量门禁框架，其中针对 skill 的部分：
+
+- `skillscan/harvest.go`：扫描 skill 内容；
+- `skillscan/testdata/skills/lark-demo/SKILL.md`：测试用例；
+- `rules/skillquality.go` + `skillquality_test.go`：skill 质量规则与单测。
+
+质量门禁框架本身还包含 comment-audit、manifest-export、semantic-review、publiccontent/credential（凭据泄露扫描）等子能力，是工程化治理的体现。
+
+### 2.7 CI 格式检查（`scripts/skill-format-check/` + workflow）
+
+- 脚本：`scripts/skill-format-check/index.js` + `test.sh`；
+- CI workflow：`.github/workflows/skill-format-check.yml`；
+- 测试用例齐全：`tests/good-skill/`、`good-skill-minimal/`、`good-skill-complex/`、`bad-skill/`、`bad-skill-no-frontmatter/`、`bad-skill-unclosed-frontmatter/`。
+
+PR 阶段校验 SKILL.md 的 frontmatter 合法性，从源头拒绝畸形 skill。
+
+### 2.8 CLI 内置 skill 子命令（`cmd/skill/skill.go`）
+
+```bash
+lark-cli skills list                  # 列出所有 skill: name/description/version
+lark-cli skills list lark-doc         # 列出某 skill 下一层（类 ls）
+lark-cli skills read <name>           # 读取 SKILL.md 内容
+```
+
+关键设计（核实自 `cmd/skill/skill.go`）：skill 内容在**构建时内嵌进二进制**，与 CLI 版本严格绑定，避免外部文件漂移；`assets/`、`scripts/` 等机器资源不入二进制。
+
+### 2.9 元工具：`lark-skill-maker`
+
+一个"帮 agent 生成新 skill"的 skill，把 skill 创作本身也 agent 化。模板 + 生成器闭环。
+
+### 2.10 三层命令架构
+
+详见第 4 章。
+
+### 2.11 Agent 专属设计
+
+详见第 5 章。
+
+### 2.12 extension/platform 可扩展治理（`extension/platform/`）
+
+提供插件化治理框架，内置示例：
+
+- `examples/audit-observer/`：审计观察者插件；
+- `examples/readonly-policy/`：只读策略插件。
+
+通过 `register.go` / `registrar.go` / `rule.go` / `selector.go` 等注册机制，允许第三方在不改 CLI 主干的前提下插入治理逻辑（如强制只读、审计日志）。
+
+### 2.13 错误契约文档化（`errs/ERROR_CONTRACT.md`）
+
+`errs/` 定义了一套 RFC 7807 对齐的类型化错误分类法，`ERROR_CONTRACT.md` 是单一真相源，服务三类受众：
+
+1. AI agent / shell 脚本（解析 stderr JSON 信封）；
+2. 协议适配器（映射到 MCP / OAuth 错误）；
+3. 框架与业务代码（生产错误）。
+
+核心不变量（核实自源码）：
+
+- 每个错误归属唯一 **Category**（共 9 类，闭合集合）；
+- 每个 typed error 有稳定 **Subtype**（小写下划线标识，未声明的 subtype 会让 CI 失败）；
+- `Category + Subtype` 是 wire-stable，重命名即 breaking change；
+- 错误信封输出到 **stderr**，每进程退出一个 JSON 对象；
+- 退出码由 `Category` 经 `output.ExitCodeForCategory` 推导（如 `SecurityPolicyError` 经 `CategoryPolicy` 退出 6）。
 
 ---
 
-## 4. CLI 设计对比（lark-cli vs mysql-cli）
+## 3. Skill 治理三件套详解
 
-| 维度 | lark-cli | mysql-cli |
-|------|----------|-----------|
-| **默认输出** | JSON | JSON |
-| **错误格式** | `{"error":true,"code":"...","message":"..."}` | `{"success":false,"error":{"code":"...","message":"..."}}` |
-| **成功格式** | 按命令不同，通常直接返回数据对象 | 严格信封 `{"success":true,"data":{...}}` |
-| **子命令分组** | `lark cal/contact/doc/msg/mail/minutes` | `mysql-cli query/txn/schema/sample/tables/...` |
-| **退出码** | 未明确强调（靠 JSON error 识别） | **稳定退出码是核心契约**（2~10） |
-| **认证管理** | 内置 `lark auth login/status/logout` | 依赖配置文件 + 环境变量 |
-| **配置** | `.lark/config.yaml` | `~/.config/mysql-cli/config.toml` |
-| **Scope/权限** | 增量授权 `--add --scopes <group>` | 安全闸门（--write/--ddl/--yes） |
-| **skill 文件** | ✅ 8 个 SKILL.md | ❌ 无 |
-| **Agent 使用指南** | ✅ 每个 skill 都有 | ❌ 只有 AGENTS.md（面向开发者） |
+larksuite/cli 把 skill 当代码治理，形成"模板 → 检查 → 门禁 → CI"闭环。
 
-**结论**：mysql-cli 的 CLI 底层设计（JSON 信封、退出码、子命令、安全模型）**已经比 lark-cli 更完善**；但在 **agent 使用层**（skill 定义、安装分发、工作流指导）上，lark-cli 提供了完整的范例。
+### 3.1 模板层（`skill-template/skill-template.md`）
+
+- frontmatter 标准化（`name` / `version` / `description` / `metadata.requires.bins` / `metadata.cliHelp`）；
+- 强制 shared 引用块；
+- `{{变量}}` 占位覆盖 shortcuts / actions / 权限表 / resource sections。
+
+### 3.2 同步检查层（`internal/skillscheck/`）
+
+- 时机：CLI 启动时（`Init` 在 root 命令执行前）；
+- 开销：零网络、零子进程，纯本地 state 比对；
+- 跳过：CI / DEV / 非 release / opt-out 环境变量；
+- 输出：`_notice.skills` 字段提示，不阻断；
+- 状态文件：本地 state，记录上次同步的 skill 版本。
+
+### 3.3 质量门禁层（`internal/qualitygate/skillscan/` + `rules/skillquality.go`）
+
+- `skillscan/harvest.go` 扫描 skill 内容；
+- `rules/skillquality.go` 定义命名、输出、dryrun 等规则；
+- 配套单测 `skillquality_test.go` 保证规则本身可回归。
+
+### 3.4 CI 层（`scripts/skill-format-check/` + `.github/workflows/skill-format-check.yml`）
+
+- `index.js` 实现 frontmatter 解析与校验；
+- `test.sh` 驱动测试用例；
+- 测试矩阵覆盖 good/bad 两类，bad 用例细分"无 frontmatter""未闭合 frontmatter""格式错误"等具体场景。
+
+### 3.5 二进制内嵌（`cmd/skill/skill.go` + `internal/skillcontent/`）
+
+skill 内容构建时内嵌进二进制，`lark-cli skills list/read` 直接服务，保证"CLI 版本 ↔ skill 版本"严格一致，杜绝运行时读到旧文件。
 
 ---
 
-## 5. 对 mysql-cli 的借鉴建议
+## 4. 三层命令架构
 
-### 5.1 建议一：提供 `skills/` 目录（高优先级）
+CLI 提供三种粒度，从高频快捷到全量裸 API：
 
-在 mysql-cli 项目根目录增加 `skills/mysql/` 或 `skills/query/`、`skills/schema/` 等 skill 定义。
+| 层级 | 前缀/形式 | 特点 | 示例 |
+|------|-----------|------|------|
+| **Shortcuts** | `+` 前缀 | 智能默认、dry-run 预览、表格输出，人机双友好 | `lark-cli calendar +agenda` |
+| **API Commands** | `<service> <resource> <method>` | 与平台 API 同步，结构化参数 | `lark-cli im message create ...` |
+| **Raw API** | 直接调底层 | 全覆盖兜底 | `lark-cli schema <service>.<resource>.<method>` 查参数结构后再调 |
 
-**理由**：
-- 降低 agent 用户的接入成本：一条 `cp` 命令即可让 Claude Code 具备 MySQL 查询能力
-- 与 lark-cli 形成生态对齐，用户心智统一
-- 是项目从 "好用" 到 "易用" 的关键一步
+Shortcuts 是 agent 首选：参数精简、输出友好、失败率低。Raw API 要求先跑 `schema` 查参数结构，禁止猜字段格式。
 
-**推荐结构**：
+---
+
+## 5. Agent 专属设计细节
+
+larksuite/cli 在 README 中独立设置 **Quick Start (AI Agent)** 章节，与人类 Quick Start 并列。具体设计：
+
+| 设计点 | 实现方式 |
+|--------|----------|
+| 独立 Agent 入口 | README 显式 "Quick Start (AI Agent)" 章节，并提示"如果是 AI Agent 帮用户安装，直接跳到该章节" |
+| 异步认证 split-flow | `auth login --no-wait` 立即返回 `verification_url` + `device_code`；后续 `auth login --device-code <code>` 轮询完成 |
+| 二维码生成 | `lark-cli auth qrcode <url>` 强制把授权 URL 转二维码，shared skill 中明文要求"必须生成二维码，不可跳过" |
+| JSON 默认 | `--json` 全局可用，机器可读 |
+| `_notice` 抑制 | 环境变量 `LARKSUITE_CLI_NO_UPDATE_NOTIFIER=1` / `LARKSUITE_CLI_NO_SKILLS_NOTIFIER=1` 抑制更新/技能版本通知，保证脚本拿到干净 JSON |
+| URL opaque 规则 | 授权 URL 视为不可修改 opaque string，禁止编码/解码/重拼 query |
+| 输入注入防护 | 防止恶意 prompt 注入 |
+| 终端输出净化 | 防止恶意转义序列污染终端 |
+| 凭证存储 | OS 原生 keychain（非明文文件） |
+| Split-Flow 时序约束 | shared skill 明确：不要在同一轮展示 URL 后立刻 `--device-code` 阻塞轮询（harness 不透传中间输出时用户看不到 URL）；不缓存 `verification_url` / `device_code`，每次重新发起 |
+| 身份切换 | `--as user` / `--as bot`，明确 bot 看不到用户资源、bot 无需 `auth login` 只需后台 scope |
+
+---
+
+## 6. 与 mysql-cli 现状对比
+
+| 维度 | larksuite/cli | mysql-cli 现状 |
+|------|---------------|----------------|
+| Skill 格式 | 标准 YAML frontmatter + Markdown，跨 agent 通用 | 单文件 `skills/mysql/SKILL.md`（16.9K） |
+| Skill 安装 | `npx skills add larksuite/cli -y -g`（通用包管理器） | `scripts/install-skills.sh` 硬编码 claude/cursor，其他 agent 靠 README 文字 |
+| Shared skill 拆分 | `lark-shared/SKILL.md` 承载认证/权限/安全/错误，所有子 skill 强制引用 | 无，全部塞在单个 SKILL.md |
+| Skill 模板 | `skill-template/skill-template.md` + `{{变量}}` | 无模板 |
+| 版本同步检查 | `internal/skillscheck/`，每次启动零开销检查 + `_notice` 提示 | 无 |
+| 质量门禁 | `internal/qualitygate/skillscan/` + `rules/skillquality.go` + 单测 | 无 |
+| CI 格式校验 | `scripts/skill-format-check/` + workflow + good/bad 用例 | 无 |
+| CLI 内置 skill 子命令 | `lark-cli skills list/read`，二进制内嵌 | 无 |
+| 元工具 | `lark-skill-maker` 帮 agent 生成 skill | 无 |
+| 错误契约 | `errs/ERROR_CONTRACT.md`，RFC 7807 aligned，9 Category + wire-stable Subtype，退出码由 Category 推导 | **已有 JSON 严格信封 + 稳定退出码契约（2~10）** —— 此点更简洁、更强 |
+| Safety 可测性 | 散落在多处规则 | **safety 纯逻辑零依赖可测** —— 更优 |
+| 三层命令 | Shortcuts / API / Raw API | 单层子命令（命令数量有限，无需分层） |
+| 异步认证 | `--no-wait` / `--device-code` | 无认证流程（不适用） |
+| 治理插件 | `extension/platform/`（audit-observer / readonly-policy） | 无（over-engineering 对当前规模） |
+| 开发者文档 | `AGENTS.md` 类似的开发者指南 | 已有 `AGENTS.md`（面向开发该项目的 agent） |
+
+**核心判断**：
+
+- mysql-cli 的 **CLI 底层契约**（JSON 信封 + 稳定退出码 2~10 + safety 纯逻辑可测）已经比 larksuite/cli 更简洁、更强，应保持；
+- 差距集中在 **skill 工程化治理层**：分发硬编码、无 shared 拆分、无模板、无版本检查、无 CI 校验、无内嵌子命令。
+
+---
+
+## 7. 对 mysql-cli 的复用建议（按优先级）
+
+### 7.1 高优先级
+
+**P1. 安装脚本去硬编码**
+
+`scripts/install-skills.sh` 当前硬编码 claude/cursor 目录。两种改法择一：
+
+- **轻量**：自动检测标准 skill 目录（`.claude/skills/`、`.cursor/rules/`、`.codex/`、`~/.claude/skills/` 等），按存在性分发；
+- **彻底**：对接通用 `npx skills add`，让 mysql-cli 也成为 `skills` 包管理器的可装源，与 larksuite/cli 生态对齐。
+
+**P2. Shared skill 拆分**
+
+把当前 16.9K 单文件拆为：
 
 ```
 skills/
-├── mysql-query/      → SKILL.md  # SQL 查询、事务、写入
-└── mysql-schema/     → SKILL.md  # 库表结构探索、采样
+├── mysql-shared/
+│   └── SKILL.md          # 安全模型 + 退出码契约(2~10) + 配置 + JSON 信封 + 错误自修复
+├── mysql-query/
+│   └── SKILL.md          # 引用 ../mysql-shared/SKILL.md，专注查询/事务/写入
+└── mysql-schema/
+    └── SKILL.md          # 引用 ../mysql-shared/SKILL.md，专注库表探索/采样
 ```
 
-或按功能聚合为单个 `skills/mysql/SKILL.md`（更简洁）。
+子 skill 顶部强制 `MUST 先 Read ../mysql-shared/SKILL.md`。安全模型与退出码契约单点维护，避免漂移。
 
-### 5.2 建议二：Skill 内容设计（中优先级）
+**P3. Skill 模板化**
 
-参照 lark-cli 模式，mysql-cli 的 SKILL.md 应包含：
+建 `skill-template/skill-template.md`，frontmatter 加 `metadata.requires.bins: ["mysql-cli"]` / `cliHelp`，统一章节结构（触发条件 / 前置检查 / 命令参考 / 安全模型 / 典型工作流 / 错误自修复 / 输出处理）。
 
-1. **触发条件**（description）
-   > "Use when user asks about database queries, table structures, MySQL data, or wants to run SQL."
+### 7.2 中优先级
 
-2. **前置检查**
-   - 检查配置文件是否存在
-   - 检查 datasource 是否可达（可选 `mysql-cli schema` 轻量探测）
+**P4. skillscheck（显式子命令版）**
 
-3. **命令参考**
-   - 按场景分组：查询、事务、结构探索
-   - 明确 `--write` / `--ddl` / `--yes` 的使用时机
+larksuite/cli 是每次启动跑（零开销 + skip 规则）。mysql-cli 每次新进程，**不宜自动跑**，改为显式子命令：
 
-4. **安全模型说明**
-   - 默认只读，DML 需 `--write`
-   - DDL 需 `--write --ddl`
-   - 破坏性操作需 `--yes`
-   - 这是 mysql-cli 的核心差异点，skill 中必须强调
+```bash
+mysql-cli skill check      # 检查已装 skill 版本是否匹配 CLI
+mysql-cli skill list       # 列出内置 skill
+mysql-cli skill version    # 查看 skill 与 CLI 版本
+```
 
-5. **典型工作流**
-   ```
-   1. explore / tables → 了解库表
-   2. schema <table> → 看表结构
-   3. sample <table> → 采样数据
-   4. query "SELECT ..." → 精确查询
-   5. --write 时执行 DML
-   ```
+避免给每次查询加额外开销，同时在用户主动检查时给出明确结论。
 
-6. **错误自修复**
-   - Exit 3 (READONLY_VIOLATION) → 加 `--write`
-   - Exit 4 (DDL_NEEDS_WRITE) → 加 `--write --ddl`
-   - Exit 5 (DESTRUCTIVE) → 加 `--yes`
-   - Exit 7 (MULTI_STATEMENT) → 改用 `txn`
+**P5. skill-format-check + CI workflow**
 
-7. **输出处理提示**
-   - JSON 默认，可用 jq 提取
-   - 大结果集建议加 `--limit`
+参照 `scripts/skill-format-check/`，加一个最小校验脚本 + GitHub/Gitee Actions workflow，PR 阶段校验 SKILL.md frontmatter 合法性（name/version/description 必填、frontmatter 闭合）。准备 good-skill / bad-skill 测试用例。
 
-### 5.3 建议三：README 增加 "Usage with Claude Code" 章节（低优先级）
+**P6. 内建 `mysql-cli skill` 子命令**
 
-lark-cli 的 README 有专门的 "Usage with Claude Code" 章节，包含：
-- 安装 skills 的命令
-- 可用 skill 列表
-- 配置注意事项
+用 `cmd/skill/` 模式把 skill 内容二进制内嵌，提供 `list/read/check/version/install`，替换独立 shell 脚本，保证"CLI 版本 ↔ skill 版本"一致。
 
-mysql-cli 的 README 目前侧重人类用户，可增加一小节说明 agent 使用方式。
+### 7.3 低优先级 / 不建议
 
-### 5.4 建议四：AGENTS.md vs SKILL.md 职责分离（已完成，需扩展）
+| 项 | 结论 | 理由 |
+|----|------|------|
+| 三层 Shortcuts 架构 | **不建议** | mysql-cli 命令数量有限，分层收益小于复杂度成本 |
+| `--no-wait` 异步认证 | **不适用** | mysql-cli 无 OAuth 认证流程 |
+| `extension/platform` 治理插件 | **不建议** | 对当前规模 over-engineering |
+| `lark-skill-maker` 元工具 | **暂缓** | skill 数量未到需要自动生成的体量 |
 
-mysql-cli 已有 `AGENTS.md`，但它**面向开发该项目的 AI agent**（代码规范、架构说明）。
+### 7.4 mysql-cli 应保持的优势
 
-lark-cli 的 `SKILL.md`**面向使用 CLI 的 AI agent**（命令调用、工作流）。
+- **JSON 严格信封**（`{"success":..., "data":..., "error":...}`）—— 比 larksuite/cli 的 `{"ok":...}` 更结构化；
+- **稳定退出码契约（2~10）**—— 每个码语义明确（READONLY_VIOLATION / DDL_NEEDS_WRITE / DESTRUCTIVE / MULTI_STATEMENT 等），agent 可直接分支处理；
+- **safety 纯逻辑零依赖可测**—— 安全闸门（`--write` / `--ddl` / `--yes`）作为纯函数，单测覆盖，比 larksuite/cli 散落规则更可靠。
 
-两者职责不同，应共存：
-- `AGENTS.md` → 继续维护，指导 AI 修改代码
-- `skills/*/SKILL.md` → 新增，指导 AI 调用 mysql-cli
+复用 larksuite/cli 的治理体系时，**不要替换**这三项，只在其之上补 skill 工程化层。
 
 ---
 
-## 6. 风险与注意事项
-
-1. **skill 维护成本**：mysql-cli 子命令和功能会演进，skill 文档需要同步更新，否则 agent 会得到过时信息。
-2. **不同 agent 平台的兼容性**：`.claude/skills/` 是 Claude Code 的约定；Cursor、Codex、Aider 等可能使用不同机制（如 Cursor Rules、MCP、自定义工具定义）。
-3. **skill 粒度**：mysql-cli 功能相对内聚（围绕 SQL），是否拆分多个 skill 还是放一个，需要权衡。
-
----
-
-## 7. 结论
+## 8. 结论与立即行动项
 
 | 评估项 | 结论 |
 |--------|------|
-| **是否需要提供 skills/ 目录？** | **是**。这是降低 agent 用户接入门槛的最有效方式，也是与 lark-cli 生态对齐的关键动作。 |
-| **lark-cli 最值得借鉴的是什么？** | **Skill 定义模式**（触发条件 + 前置检查 + 工作流 + 错误自修复 + 最佳实践），而非底层 CLI 设计。mysql-cli 的 CLI 设计（JSON 信封、退出码、安全模型）已经更完善。 |
-| **立即行动项** | 1. 创建 `skills/mysql/SKILL.md`<br>2. 在 README 增加 agent 使用说明<br>3. 建立 skill 与 CLI 变更的同步机制 |
+| 调研对象是否正确？ | 已修正为官方 `larksuite/cli`（前次误调 `yjwong/lark-cli`） |
+| larksuite/cli 最值得借鉴的是什么？ | **Skill 工程化治理体系**：标准格式 + 通用安装 + shared 拆分 + 模板 + skillscheck + qualitygate + CI 校验 + 二进制内嵌子命令 |
+| mysql-cli 底层是否需要改？ | **不需要**。JSON 信封 + 退出码 2~10 + safety 可测已优于 larksuite/cli，应保持 |
+| 主要差距在哪？ | Skill 分发硬编码、无 shared 拆分、无模板、无版本检查、无 CI 校验、无内嵌子命令 |
+
+**立即行动项（按顺序）**：
+
+1. **P1 安装脚本去硬编码**：改 `scripts/install-skills.sh` 自动检测标准 skill 目录，或对接 `npx skills add`；
+2. **P2 Shared skill 拆分**：抽出 `mysql-shared/SKILL.md`，承载安全模型 + 退出码契约 + 配置 + JSON 信封；`mysql-query` / `mysql-schema` 子 skill 强制引用；
+3. **P3 Skill 模板化**：建 `skill-template/skill-template.md`，统一 frontmatter 与章节结构；
+4. **P5 CI 格式校验**：加最小 `skill-format-check` 脚本 + workflow + good/bad 用例（投入小、收益快）；
+5. **P4/P6 内建 skill 子命令**：后续随 CLI 演进，把 skill 内容二进制内嵌，提供 `list/read/check/version`。
+
+---
+
+## 附：核实来源
+
+以下文件均通过 `gh api` 读取源码确认：
+
+- `README.md`（项目概况、26 skills、三层架构、Quick Start AI Agent 章节）
+- `skills/lark-shared/SKILL.md`（shared 自动加载、认证 split-flow、`_notice` 抑制环境变量、URL opaque 规则）
+- `skill-template/skill-template.md`（frontmatter `metadata.requires.bins` / `cliHelp`、`{{变量}}` 占位、强制 Read shared）
+- `internal/skillscheck/check.go`（`Init` 同步检查逻辑、零网络零子进程、skip 规则、`StaleNotice`）
+- `cmd/skill/skill.go`（`lark-cli skills list/read` 子命令、二进制内嵌）
+- `errs/ERROR_CONTRACT.md`（RFC 7807 错误契约、9 Category、wire-stable Subtype、退出码由 Category 推导）
+- 目录树（`scripts/skill-format-check/` + good/bad 测试用例、`internal/qualitygate/skillscan/` + `rules/skillquality.go`、`extension/platform/examples/audit-observer/` + `readonly-policy/`）

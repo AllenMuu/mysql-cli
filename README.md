@@ -175,63 +175,62 @@ The tunnel is opened before the DB connection and closed together with it.
 
 ## Usage with AI Agents
 
-`mysql-cli` ships an [Agent Skill](./skills/mysql/SKILL.md) so agents can
-discover and drive it without an MCP runtime. The skill encodes trigger
-conditions, pre-flight checks, command reference, the safety model, and
-error self-repair — so the agent calls `mysql-cli` correctly the first time.
+`mysql-cli` ships [Agent Skills](./skills/) so agents can discover and drive
+it without an MCP runtime. Skills encode trigger conditions, pre-flight
+checks, command reference, the safety model, and error self-repair - so the
+agent calls `mysql-cli` correctly the first time.
 
-### Quick install (Claude Code)
+There are three skills, following the shared-skill pattern from `larksuite/cli`:
 
-`mysql-cli` ships a [Claude Code Skill](./skills/mysql/SKILL.md). Copy it into your project:
+| Skill | Purpose |
+| --- | --- |
+| [`mysql-shared`](./skills/mysql-shared/SKILL.md) | Config, datasource, global flags, safety model, exit codes, error recovery, output formats - referenced by the other two |
+| [`mysql-query`](./skills/mysql-query/SKILL.md) | Run SQL: `query`, `txn`, DML/DDL |
+| [`mysql-schema`](./skills/mysql-schema/SKILL.md) | Explore schema: `tables`, `databases`, `schema`, `sample`, `read`, `explore`, `analyze` |
+
+### Quick install
+
+**Option A - installer script** (auto-detects Claude Code / Cursor):
 
 ```bash
-cp -r skills/mysql .claude/skills/
+./scripts/install-skills.sh                          # auto-detect
+./scripts/install-skills.sh --agent all --project-dir ~/my-project
 ```
 
-Or use the installer (also installs globally):
+**Option B - from the binary** (embeds skills, zero external deps):
 
 ```bash
-./scripts/install-skills.sh --agent claude
-./scripts/install-skills.sh --agent claude --project-dir ~/my-project
+mysql-cli skill install                  # -> ~/.claude/skills
+mysql-cli skill install ~/my-project/.claude/skills
 ```
+
+Both install all three skills. Verify with `mysql-cli skill check`.
 
 ### Other agents
 
-`mysql-cli` works with **any agent that can run shell commands and parse JSON**, but only Claude Code natively supports the SKILL.md format. For other agents, copy the relevant sections of [`skills/mysql/SKILL.md`](./skills/mysql/SKILL.md) into their native configuration files.
+`mysql-cli` works with **any agent that can run shell commands and parse
+JSON**. Claude Code and Cursor are supported natively by the installer; for
+others, reference the SKILL.md files from your agent's instruction file
+(e.g. `AGENTS.md`, `.github/copilot-instructions.md`).
 
 | Agent | Config format | How to use `mysql-cli` |
 | --- | --- | --- |
-| **Claude Code** | `.claude/skills/SKILL.md` (YAML frontmatter + Markdown) | `cp -r skills/mysql .claude/skills/` — auto-loaded |
-| **Cursor** | `.cursor/rules/*.mdc` (YAML frontmatter + Markdown) | Create `.cursor/rules/mysql-cli.mdc` (see example below) |
-| **OpenCode** | `.opencode.json` (JSON config) | Not SKILL.md compatible; add usage notes to your `.opencode.json` instructions or use shell directly |
-| **Codex CLI** | No local skill file; platform-managed skills | Call `mysql-cli query "..." -f json` directly via shell |
-| **Aider** | `.aider.conf.yml` (YAML) | Add to `read:` list, or call `mysql-cli` over shell |
-| **GitHub Copilot** | `.github/copilot-instructions.md` (Markdown) | Add `mysql-cli` usage examples to instructions file |
-| **Windsurf** | `.windsurfrules` (plain text) | Add `mysql-cli` rules inline |
+| **Claude Code** | `.claude/skills/*/SKILL.md` | `./scripts/install-skills.sh` or `mysql-cli skill install` - auto-loaded |
+| **Cursor** | `.cursor/rules/*.mdc` | `./scripts/install-skills.sh --agent cursor` - generates `.mdc` per skill |
+| **Codex CLI** | No local skill file | Reference `skills/mysql-*/SKILL.md` in `AGENTS.md`; call via shell |
+| **OpenCode** | `.opencode.json` | Add usage notes referencing the skills; call via shell |
+| **Aider** | `.aider.conf.yml` | Add SKILL.md paths to `read:` list, or call via shell |
+| **GitHub Copilot** | `.github/copilot-instructions.md` | Reference the skills in instructions |
+| **Windsurf** | `.windsurfrules` | Inline `mysql-cli` rules referencing the skills |
 
-#### Cursor example
+### Skill management commands
 
-Create `.cursor/rules/mysql-cli.mdc`:
-
-```markdown
----
-description: MySQL queries and schema exploration via mysql-cli
-globs: *.sql
----
-Use `mysql-cli` for all database operations. Default read-only.
-- Read: `mysql-cli query "<sql>" -f json`
-- Write (DML): `mysql-cli query "<sql>" --write -f json`
-- DDL: `mysql-cli query "<sql>" --write --ddl -f json`
-- Schema: `mysql-cli schema <table> -f json`
-- Transaction: `mysql-cli txn "<s1>" "<s2>" --write -f json`
-See `~/.config/mysql-cli/config.toml` for datasource config.
-```
-
-### Available skill
-
-| Skill | Path | Description |
-| --- | --- | --- |
-| `mysql` | [`skills/mysql/SKILL.md`](./skills/mysql/SKILL.md) | Query MySQL, explore schema, run transactions/DML/DDL via `mysql-cli` |
+| Command | Description |
+| --- | --- |
+| `mysql-cli skill list` | List skills bundled with this binary |
+| `mysql-cli skill version` | Print expected skill versions |
+| `mysql-cli skill check [dir] [-j]` | Compare installed vs bundled versions (`ok`/`stale`/`missing`) |
+| `mysql-cli skill install [dir]` | Install bundled skills into a directory |
 
 ### Setup notes
 
