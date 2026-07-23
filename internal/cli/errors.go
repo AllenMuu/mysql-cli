@@ -13,6 +13,8 @@ import (
 // mapError translates a core error into an exit code.
 func mapError(err error) int {
 	switch {
+	case errors.Is(err, ErrInitAllFailed):
+		return ExitInitFailed
 	case errors.Is(err, safety.ErrReadonlyViolation):
 		return ExitReadonlyViolation
 	case errors.Is(err, safety.ErrDDLRequiresWrite):
@@ -67,7 +69,8 @@ func errorCodeName(code int) string {
 		return "QUERY_TIMEOUT"
 	case ExitConfigError:
 		return "CONFIG_ERROR"
+	case ExitInitFailed:
+		return "INIT_FAILED"
 	}
 	return "UNKNOWN"
 }
-
