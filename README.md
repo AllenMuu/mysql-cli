@@ -2,7 +2,7 @@
 
 # mysql-cli
 
-**A Go CLI that lets any shell-capable AI agent query MySQL — no MCP runtime required.**
+**A Go CLI that lets any shell-capable AI agent query MySQL - no MCP runtime required.**
 
 A drop-in replacement for [`designcomputer/mysql_mcp_server`](https://github.com/designcomputer/mysql_mcp_server):
 all of its read/write capabilities, re-exposed as plain subcommands. If your agent
@@ -12,7 +12,7 @@ can run a shell, it can query MySQL.
 
 [![Version](https://img.shields.io/github/v/release/AllenMuu/mysql-cli?label=version)](https://github.com/AllenMuu/mysql-cli/releases)
 [![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#install)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#installation--quick-start)
 [![Output](https://img.shields.io/badge/output-JSON%20%7C%20table%20%7C%20CSV%20%7C%20TSV-blue)](#output)
 
 </div>
@@ -21,24 +21,40 @@ can run a shell, it can query MySQL.
 
 ## Why
 
-The original MCP server is great — until you want to use it from an agent that doesn't
+The original MCP server is great - until you want to use it from an agent that doesn't
 speak MCP. `mysql-cli` keeps the safety model and feature set, but ships as a single
 binary with **JSON by default** and **stable exit codes**, so any agent
 (Claude Code, Cursor, Codex, Aider, …) can drive it directly over a shell.
 
-- **Agent-first** — stable JSON envelope + numeric exit codes, designed to be parsed, not read.
-- **Safe by default** — read-only out of the box; writes/DDL/destructive ops need explicit flags.
-- **Zero-config migration** — drop-in for the MCP server's `MYSQL_*` env vars.
-- **Multi-datasource** — named profiles in TOML, with optional SSH tunneling.
-- **One binary** — `go install` and you're done.
+- **Agent-first** - stable JSON envelope + numeric exit codes, designed to be parsed, not read.
+- **Safe by default** - read-only out of the box; writes/DDL/destructive ops need explicit flags.
+- **Zero-config migration** - drop-in for the MCP server's `MYSQL_*` env vars.
+- **Multi-datasource** - named profiles in TOML, with optional SSH tunneling.
+- **One binary** - `go install` and you're done.
 
-## Install
+## Installation & Quick Start
+
+### Requirements
+
+- Go **1.22+** (to install via `go install` or build from source)
+- A MySQL database you can reach (host/port/user/password)
+- For AI Agents: any agent that can run shell commands and parse JSON
+
+### Quick Start (Human Users)
+
+> **Note for AI assistants:** If you are an AI Agent helping the user install `mysql-cli`,
+> jump directly to [Quick Start (AI Agent)](#quick-start-ai-agent), which contains every
+> step you need to complete.
+
+#### Install
+
+**Option 1 - `go install` (recommended):**
 
 ```bash
 go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest
 ```
 
-Build from source:
+**Option 2 - build from source:**
 
 ```bash
 git clone https://github.com/AllenMuu/mysql-cli.git
@@ -48,7 +64,23 @@ go build -o mysql-cli ./cmd/mysql-cli
 
 > Requires Go 1.22+.
 
-## Quick start
+#### Configure & Use
+
+Create `~/.config/mysql-cli/config.toml` (see [Configure](#configure) for multiple
+datasources, env-var compat, and SSH tunneling):
+
+```toml
+default = "dev"
+
+[datasource.dev]
+host = "127.0.0.1"
+port = 3306
+user = "root"
+password = "${MYSQL_DEV_PASSWORD}"
+database = "app"
+```
+
+Then query:
 
 ```bash
 mysql-cli query "SELECT * FROM users LIMIT 10"        # read (default)
@@ -57,9 +89,68 @@ mysql-cli schema users                                 # table structure
 mysql-cli                                              # enter REPL (human debugging)
 ```
 
+## Quick Start (AI Agent)
+
+> The following steps are for AI Agents. `mysql-cli` has **no browser-based auth**, so an
+> agent can complete the entire setup over the shell: install the binary, install the
+> Agent Skills, configure a datasource, then verify and run a query.
+
+**Step 1 - Install the binary**
+
+```bash
+go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest
+```
+
+> `mysql-cli` **must be on `PATH`** - the skills invoke it by name. Build from source with
+> `go build -o mysql-cli ./cmd/mysql-cli` if `go install` is unavailable.
+
+**Step 2 - Install Agent Skills**
+
+Choose one (both install all three skills):
+
+*Option A - installer script* (supports all agents below):
+
+```bash
+./scripts/install-skills.sh                              # auto-detect
+./scripts/install-skills.sh --agent all --project-dir ~/my-project
+```
+
+*Option B - from the binary* (embeds skills, zero external deps):
+
+```bash
+mysql-cli skill install                       # -> ~/.claude/skills
+mysql-cli skill install ~/my-project/.claude/skills
+```
+
+**Step 3 - Configure a datasource**
+
+Write `~/.config/mysql-cli/config.toml` (full format in [Configure](#configure)):
+
+```toml
+default = "dev"
+
+[datasource.dev]
+host = "127.0.0.1"
+port = 3306
+user = "root"
+password = "${MYSQL_DEV_PASSWORD}"
+database = "app"
+```
+
+**Step 4 - Verify & run**
+
+```bash
+mysql-cli skill check                                 # confirm skills match the binary
+mysql-cli query "SELECT * FROM users LIMIT 10"        # JSON by default
+```
+
+The JSON envelope + exit codes are the contract the agent parses - keep `-f json`
+(the default) when driving programmatically. See [Output](#output) and
+[Exit codes](#exit-codes).
+
 ## Configure
 
-`~/.config/mysql-cli/config.toml`:
+`~/.config/mysql-cli/config.toml` (override with `--config`):
 
 ```toml
 default = "dev"
@@ -174,7 +265,7 @@ local_port = 3330
 
 The tunnel is opened before the DB connection and closed together with it.
 
-## Usage with AI Agents
+## Agent Skills
 
 `mysql-cli` ships [Agent Skills](./skills/) so agents can discover and drive
 it without an MCP runtime. Skills encode trigger conditions, pre-flight
@@ -188,24 +279,6 @@ There are three skills, following the shared-skill pattern from `larksuite/cli`:
 | [`mysql-shared`](./skills/mysql-shared/SKILL.md) | Config, datasource, global flags, safety model, exit codes, error recovery, output formats - referenced by the other two |
 | [`mysql-query`](./skills/mysql-query/SKILL.md) | Run SQL: `query`, `txn`, DML/DDL |
 | [`mysql-schema`](./skills/mysql-schema/SKILL.md) | Explore schema: `tables`, `databases`, `schema`, `sample`, `read`, `explore`, `analyze` |
-
-### Quick install
-
-**Option A - installer script** (supports all agents below):
-
-```bash
-./scripts/install-skills.sh                          # auto-detect
-./scripts/install-skills.sh --agent all --project-dir ~/my-project
-```
-
-**Option B - from the binary** (embeds skills, zero external deps):
-
-```bash
-mysql-cli skill install                  # -> ~/.claude/skills
-mysql-cli skill install ~/my-project/.claude/skills
-```
-
-Both install all three skills. Verify with `mysql-cli skill check`.
 
 ### Other agents
 
@@ -235,12 +308,12 @@ body appended (idempotently) to their instruction files.
 
 ### Setup notes
 
-- **`mysql-cli` must be on `PATH`** — install with
+- **`mysql-cli` must be on `PATH`** - install with
   `go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest`, or edit the
   skill to point at your built binary. / `mysql-cli` 必须在 `PATH` 中。
-- **Config file** — the skill expects `~/.config/mysql-cli/config.toml`
+- **Config file** - the skill expects `~/.config/mysql-cli/config.toml`
   (override with `--config`). See [Configure](#configure). / 需配置文件。
-- **Default JSON output** — the skill relies on the JSON envelope + exit codes;
+- **Default JSON output** - the skill relies on the JSON envelope + exit codes;
   keep `-f json` (the default) when driving programmatically. / 默认 JSON 输出。
 
 ## Architecture
@@ -260,14 +333,14 @@ cmd/mysql-cli/main  ->  cli   (cobra wiring + exit-code mapping)
 
 | Package | Responsibility |
 | --- | --- |
-| `result` | Shared `Result{Columns, Rows, RowsAffected, LastInsertID}` — the neutral contract |
+| `result` | Shared `Result{Columns, Rows, RowsAffected, LastInsertID}` - the neutral contract |
 | `safety` | SQL classification, read-only gate, identifier validation, multi-statement & destructive-op detection (pure, fully unit-tested) |
 | `config` | TOML named datasources + `MYSQL_*` env compat |
 | `conn` | DSN rendering, connection pool, SSH tunnel lifecycle |
 | `query` | Read / write / transaction execution, each statement gated by `safety` |
 | `schema` | Read-only exploration commands |
-| `format` | `result` → json/table/csv/tsv |
-| `cli` | cobra subcommands + `mapError` (errors → exit codes) |
+| `format` | `result` -> json/table/csv/tsv |
+| `cli` | cobra subcommands + `mapError` (errors -> exit codes) |
 | `repl` | readline shell for human debugging |
 
 ## Acknowledgements
