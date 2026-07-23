@@ -25,6 +25,7 @@ const (
 	ExitSQLError               = 8
 	ExitQueryTimeout           = 9
 	ExitConfigError            = 10
+	ExitInitFailed             = 11
 )
 
 // Globals carries parsed global flags shared by all subcommands.
@@ -90,6 +91,7 @@ func newRootCmd(g *Globals) *cobra.Command {
 	pf.StringVar(&g.Password, "password", "", "MySQL password")
 	pf.StringVar(&g.Database, "db", "", "MySQL database")
 
+	root.SetOut(g.out)
 	root.AddCommand(
 		newQueryCmd(g),
 		newTxnCmd(g),
@@ -101,6 +103,7 @@ func newRootCmd(g *Globals) *cobra.Command {
 		newExploreCmd(g),
 		newAnalyzeCmd(g),
 		newSkillCmd(),
+		newInitCmd(),
 	)
 	// No subcommand -> interactive REPL (human debug; not the agent path).
 	root.RunE = func(cmd *cobra.Command, args []string) error {
