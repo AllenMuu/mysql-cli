@@ -49,7 +49,9 @@ func copySkillTree(opts Options, dstDir, skill string) error {
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
 		return err
 	}
-	_ = os.RemoveAll(filepath.Join(dstDir, skill))
+	if err := os.RemoveAll(filepath.Join(dstDir, skill)); err != nil {
+		return err
+	}
 	return fs.WalkDir(opts.FS, skill, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

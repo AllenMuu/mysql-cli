@@ -30,8 +30,7 @@ func TestInstallClaude_GlobalOnlyByDefault(t *testing.T) {
 	paths, err := installClaude(baseOpts(home, ""))
 	require.NoError(t, err)
 	assert.FileExists(t, filepath.Join(home, ".claude", "skills", "mysql-query", "SKILL.md"))
-	assert.NoDirExists(t, filepath.Join(".", ".claude")) // no project install without --project-dir
-	_ = paths
+	assert.NotEmpty(t, paths) // ProjectDir=="" short-circuits project install; no cwd check needed
 }
 
 func TestInstallClaude_NoGlobal(t *testing.T) {
@@ -43,6 +42,19 @@ func TestInstallClaude_NoGlobal(t *testing.T) {
 	require.NoError(t, err)
 	assert.NoDirExists(t, filepath.Join(home, ".claude"))
 	assert.FileExists(t, filepath.Join(proj, ".claude", "skills", "mysql-shared", "SKILL.md"))
+}
+
+func TestInstallClaude_DryRun(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	o := baseOpts(home, proj)
+	o.DryRun = true
+	paths, err := installClaude(o)
+	require.NoError(t, err)
+	// DryRun must report paths but write nothing.
+	assert.NotEmpty(t, paths)
+	assert.NoDirExists(t, filepath.Join(proj, ".claude"))
+	assert.NoDirExists(t, filepath.Join(home, ".claude"))
 }
 
 func TestInstallCursor_MDCFiles(t *testing.T) {
@@ -59,9 +71,47 @@ func TestInstallCursor_MDCFiles(t *testing.T) {
 
 func TestInstallCursor_DryRun(t *testing.T) {
 	home := t.TempDir()
-	o := baseOpts(home, "")
+	proj := t.TempDir()
+	// Create ~/.cursor so the global branch is entered (otherwise the
+	// existence guard would hide DryRun's effect on the global branch).
+	requireDir(t, home, ".cursor")
+	o := baseOpts(home, proj)
 	o.DryRun = true
-	_, err := installCursor(o)
+	paths, err := installCursor(o)
 	require.NoError(t, err)
-	assert.NoDirExists(t, filepath.Join(home, ".cursor"))
+	// DryRun must report paths but write no .mdc files anywhere.
+	assert.NotEmpty(t, paths)
+	assert.NoDirExists(t, filepath.Join(proj, ".cursor", "rules"))
+	assert.NoDirExists(t, filepath.Join(home, ".cursor", "rules"))
+}
+
+func TestInstallCursor_SkipsGlobalWhenCursorMissing(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	// Deliberately do NOT create ~/.cursor; NoGlobal=false.
+	o := baseOpts(home, proj)
+	paths, err := installCursor(o)
+	require.NoError(t, err)
+	// Project .mdc files must exist; global ~/.cursor/rules must not.
+	for _, s := range testNames {
+		assert.FileExists(t, filepath.Join(proj, ".cursor", "rules", s+".mdc"))
+	}
+	assert.NoDirExists(t, filepath.Join(home, ".cursor", "rules"))
+	assert.NotEmpty(t, paths)
+}
+
+func TestInstallCursor_NoGlobal(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	// ~/.cursor exists but NoGlobal=true must still skip the global branch.
+	requireDir(t, home, ".cursor")
+	o := baseOpts(home, proj)
+	o.NoGlobal = true
+	paths, err := installCursor(o)
+	require.NoError(t, err)
+	for _, s := range testNames {
+		assert.FileExists(t, filepath.Join(proj, ".cursor", "rules", s+".mdc"))
+	}
+	assert.NoDirExists(t, filepath.Join(home, ".cursor", "rules"))
+	assert.NotEmpty(t, paths)
 }
