@@ -1149,7 +1149,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -1223,9 +1222,6 @@ func TestInit_TextOutput(t *testing.T) {
 	assert.Contains(t, out, "mysql-cli skill init")
 	assert.Contains(t, out, "claude")
 }
-
-// ensure HOME restore doesn't leak
-var _ = os.Setenv
 ```
 
 - [ ] **Step 4: 跑测试确认失败**
