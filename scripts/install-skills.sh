@@ -28,6 +28,8 @@
 # =============================================================================
 
 set -euo pipefail
+echo "⚠️  install-skills.sh is deprecated; use \`mysql-cli init\` instead." >&2
+echo "    This script will be removed in a future release." >&2
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 AGENT="auto"

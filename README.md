@@ -106,7 +106,16 @@ go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest
 
 **Step 2 - Install Agent Skills**
 
-Choose one (both install all three skills):
+Choose one (all install the three skills). **Option 0 is the recommended approach**:
+
+**Option 0 - `mysql-cli init` (recommended, no repo clone needed):**
+
+```bash
+mysql-cli init                       # auto-detect installed agents, install to global
+mysql-cli init --agent all           # install for all 7 agents
+mysql-cli init --project-dir ~/my-project --no-global  # project-level only
+mysql-cli init -j                    # JSON output for agents
+```
 
 *Option A - installer script* (supports all agents below):
 
