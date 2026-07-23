@@ -67,4 +67,3 @@ func TestErrorCodeName(t *testing.T) {
 		assert.Equal(t, tc.want, errorCodeName(tc.code))
 	}
 }
-
