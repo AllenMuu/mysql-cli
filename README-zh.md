@@ -9,6 +9,7 @@
 
 [English](./README.md) · [简体中文](./README-zh.md)
 
+[![版本](https://img.shields.io/github/v/release/AllenMuu/mysql-cli?label=version)](https://github.com/AllenMuu/mysql-cli/releases)
 [![Go 版本](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![平台](https://img.shields.io/badge/平台-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#安装)
 [![输出](https://img.shields.io/badge/输出-JSON%20%7C%20table%20%7C%20CSV%20%7C%20TSV-blue)](#输出)
