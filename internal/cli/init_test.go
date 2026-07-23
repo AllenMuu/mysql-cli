@@ -34,7 +34,7 @@ func TestInit_AutoDefaultClaude_JSON(t *testing.T) {
 		Success bool `json:"success"`
 		Data    struct {
 			Agents []struct {
-				Agent  string `json:"agent"`
+				Agent  string `json:"name"`
 				Status string `json:"status"`
 			} `json:"agents"`
 		} `json:"data"`
@@ -150,7 +150,7 @@ func TestInit_AllAgents_SomeSkipped(t *testing.T) {
 	var env struct {
 		Data struct {
 			Agents []struct {
-				Agent  string `json:"agent"`
+				Agent  string `json:"name"`
 				Status string `json:"status"`
 			} `json:"agents"`
 		} `json:"data"`

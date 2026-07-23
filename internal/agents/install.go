@@ -22,7 +22,7 @@ type Options struct {
 
 // InstallResult is the outcome for one agent.
 type InstallResult struct {
-	Agent    string   `json:"agent"`
+	Agent    string   `json:"name"`
 	Detected bool     `json:"detected"`
 	Paths    []string `json:"paths"`
 	Status   string   `json:"status"` // installed | skipped | error
@@ -135,7 +135,10 @@ func writeMerged(opts Options, path string) (string, error) {
 	if err != nil {
 		return path, err
 	}
-	existing, _ := os.ReadFile(path) // absent is OK
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return path, err
+	}
 	content := MergeInstructionFile(string(existing), merged)
 	if err := writeIfNotDryRun(opts, path, content); err != nil {
 		return path, err

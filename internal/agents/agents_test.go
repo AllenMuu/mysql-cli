@@ -33,10 +33,12 @@ func TestRun_All(t *testing.T) {
 	requireDir(t, home, ".claude") // Claude present -> Detected must be true
 	res := Run(SelAll, baseOpts(home, ""))
 	assert.Len(t, res, len(AllAgents))
-	// copilot has no project dir -> skipped; rest installed (global)
+	// No --project-dir: copilot is project-only -> skipped; cursor has no
+	// ~/.cursor and no project dir -> writes nothing -> skipped. The rest
+	// install globally (non-empty paths).
 	for _, r := range res {
-		if r.Agent == Copilot {
-			assert.Equal(t, "skipped", r.Status)
+		if r.Agent == Copilot || r.Agent == Cursor {
+			assert.Equal(t, "skipped", r.Status, r.Agent)
 		} else {
 			assert.Equal(t, "installed", r.Status, r.Agent)
 		}

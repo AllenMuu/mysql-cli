@@ -60,8 +60,10 @@ func Install(agent string, opts Options) InstallResult {
 	paths, err := fn(opts)
 	r.Paths = paths
 	switch {
-	case err == nil:
+	case err == nil && len(paths) > 0:
 		r.Status = "installed"
+	case err == nil && len(paths) == 0:
+		r.Status = "skipped"
 	case errors.Is(err, ErrProjectOnly):
 		r.Status = "skipped"
 		r.Error = err.Error()
