@@ -37,7 +37,7 @@ function download(url) {
   return new Promise((resolve, reject) => {
     const get = (u, redirs) => {
       if (redirs > 5) return reject(new Error('too many redirects'));
-      https.get(u, (res) => {
+      const req = https.get(u, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume();
           return get(res.headers.location, redirs + 1);
@@ -49,7 +49,9 @@ function download(url) {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
         res.on('end', () => resolve(Buffer.concat(chunks)));
-      }).on('error', reject);
+      });
+      req.setTimeout(60000, () => req.destroy(new Error('download timed out after 60s')));
+      req.on('error', reject);
     };
     get(url, 0);
   });
@@ -71,10 +73,15 @@ async function run() {
     const buf = await download(url);
     const archivePath = path.join(outDir, mapped.asset);
     fs.writeFileSync(archivePath, buf);
-    extractArchive(archivePath, outDir);
-    fs.unlinkSync(archivePath);
-    if (mapped.goos !== 'windows') fs.chmodSync(binPath, 0o755);
-    if (!fs.existsSync(binPath)) throw new Error('binary not found after extraction');
+    try {
+      extractArchive(archivePath, outDir);
+      if (!fs.existsSync(binPath)) throw new Error('binary not found after extraction');
+      if (mapped.goos !== 'windows') fs.chmodSync(binPath, 0o755);
+    } finally {
+      if (fs.existsSync(archivePath)) {
+        try { fs.unlinkSync(archivePath); } catch (_) { /* ignore unlink failure */ }
+      }
+    }
     console.log(`mysql-cli: installed binary to ${binPath}`);
   } catch (err) {
     // Non-fatal: leave bin/ without the binary; the shim prints guidance.
