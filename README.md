@@ -190,7 +190,7 @@ There are three skills, following the shared-skill pattern from `larksuite/cli`:
 
 ### Quick install
 
-**Option A - installer script** (auto-detects Claude Code / Cursor):
+**Option A - installer script** (supports all agents below):
 
 ```bash
 ./scripts/install-skills.sh                          # auto-detect
@@ -209,19 +209,19 @@ Both install all three skills. Verify with `mysql-cli skill check`.
 ### Other agents
 
 `mysql-cli` works with **any agent that can run shell commands and parse
-JSON**. Claude Code and Cursor are supported natively by the installer; for
-others, reference the SKILL.md files from your agent's instruction file
-(e.g. `AGENTS.md`, `.github/copilot-instructions.md`).
+JSON**. The installer supports all seven agents below: Claude Code and Cursor
+use the native SKILL.md / .mdc formats; the others receive the merged skill
+body appended (idempotently) to their instruction files.
 
 | Agent | Config format | How to use `mysql-cli` |
 | --- | --- | --- |
-| **Claude Code** | `.claude/skills/*/SKILL.md` | `./scripts/install-skills.sh` or `mysql-cli skill install` - auto-loaded |
-| **Cursor** | `.cursor/rules/*.mdc` | `./scripts/install-skills.sh --agent cursor` - generates `.mdc` per skill |
-| **Codex CLI** | No local skill file | Reference `skills/mysql-*/SKILL.md` in `AGENTS.md`; call via shell |
-| **OpenCode** | `.opencode.json` | Add usage notes referencing the skills; call via shell |
-| **Aider** | `.aider.conf.yml` | Add SKILL.md paths to `read:` list, or call via shell |
-| **GitHub Copilot** | `.github/copilot-instructions.md` | Reference the skills in instructions |
-| **Windsurf** | `.windsurfrules` | Inline `mysql-cli` rules referencing the skills |
+| **Claude Code** | `.claude/skills/*/SKILL.md` | `./scripts/install-skills.sh --agent claude` or `mysql-cli skill install` |
+| **Cursor** | `.cursor/rules/*.mdc` | `./scripts/install-skills.sh --agent cursor` |
+| **Codex CLI** | `AGENTS.md` | `./scripts/install-skills.sh --agent codex` |
+| **OpenCode** | `.opencode/instructions.md` | `./scripts/install-skills.sh --agent opencode` |
+| **GitHub Copilot** | `.github/copilot-instructions.md` | `./scripts/install-skills.sh --agent copilot` |
+| **Windsurf** | `.windsurfrules` | `./scripts/install-skills.sh --agent windsurf` |
+| **Aider** | `.aider.instructions.md` | `./scripts/install-skills.sh --agent aider` (then add `read:` to `.aider.conf.yml`) |
 
 ### Skill management commands
 

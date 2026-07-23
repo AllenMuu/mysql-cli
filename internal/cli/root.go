@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 	"strings"
+	"time"
 
-	"github.com/AllenMuu/mysql-cli/internal/result"
 	"github.com/AllenMuu/mysql-cli/internal/repl"
+	"github.com/AllenMuu/mysql-cli/internal/result"
 	"github.com/spf13/cobra"
 )
 
@@ -62,16 +62,16 @@ func Run(args []string) int {
 func newRootCmd(g *Globals) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "mysql-cli",
-		Short:         "MySQL CLI for AI agents (replaces mysql-mcp)",
+		Short:         "MySQL CLI for AI agents",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if g.Format != "json" && g.Format != "table" && g.Format != "csv" && g.Format != "tsv" {
 				return fmt.Errorf("invalid format %q (want json|table|csv|tsv)", g.Format)
-		}
+			}
 			if _, err := time.ParseDuration(g.Timeout); err != nil {
 				return fmt.Errorf("invalid timeout %q: %w", g.Timeout, err)
-		}
+			}
 			return nil
 		},
 	}

@@ -80,7 +80,7 @@ skill 让 agent 零配置发现并正确调用 mysql-cli，设计参照 `larksui
 
 - **skill 文件**：`skills/mysql-{shared,query,schema}/SKILL.md`。`mysql-shared` 承载配置/安全模型/退出码/错误自修复，被 `mysql-query`/`mysql-schema` 顶部 `MUST Read` 引用（auto-load，DRY）。新增 skill 建 `skills/mysql-<name>/SKILL.md`，参考 `skill-template/skill-template.md`。
 - **安装**（二选一）：
-  - `./scripts/install-skills.sh` -- auto 检测 `~/.claude`/`~/.cursor`，claude 复制 3 个 skill 目录，cursor 生成适配 `.mdc`；支持 `--agent claude|cursor|all`、`--project-dir`、`--no-global`。
+  - `./scripts/install-skills.sh` -- auto 检测已安装的 agent；原生支持 claude/cursor（SKILL.md/.mdc），codex/opencode/copilot/windsurf/aider 幂等追加合并 skill 到各自指令文件；支持 `--agent <name>|all`、`--project-dir`、`--no-global`。
   - `mysql-cli skill install [target-dir]` -- 从二进制内嵌的 bundle 安装，零外部依赖（默认 `~/.claude/skills`）。
 - **版本同步检查**：`mysql-cli skill check [target-dir] [-j]` 对比已装 skill version 与内嵌版本，状态 `ok/stale/missing/unknown`，始终 exit 0（agent 解析 JSON `status` 字段）。
 - **格式校验**：`scripts/skill-format-check.sh` 校验 SKILL.md frontmatter（name/version/description/metadata + name 匹配目录 + semver），CI `.github/workflows/skill-format-check.yml` 在 PR 时强制。改 skill 后本地跑一遍。
