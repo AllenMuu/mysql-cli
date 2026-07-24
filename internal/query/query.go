@@ -21,6 +21,7 @@ type Options struct {
 	DDL     bool
 	Yes     bool
 	Limit   int
+	Probe   bool
 	Timeout time.Duration
 }
 
@@ -45,7 +46,7 @@ func Execute(ctx context.Context, pool *conn.Pool, sqlText string, opts Options)
 		return result.Empty(), fmt.Errorf("%w: %v", ErrGuard, err)
 	}
 
-	execSQL := applyLimit(sqlText, opts.Limit)
+	execSQL := applyLimit(sqlText, opts.Limit, opts.Probe)
 
 	if opts.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -86,22 +87,30 @@ func Execute(ctx context.Context, pool *conn.Pool, sqlText string, opts Options)
 	if err := rows.Err(); err != nil {
 		return result.Empty(), fmt.Errorf("%w: %v", ErrSQL, err)
 	}
+	if opts.Probe && opts.Limit > 0 && selectRe.MatchString(sqlText) && len(res.Rows) > opts.Limit {
+		res.Truncated = true
+		res.Rows = res.Rows[:opts.Limit]
+	}
 	return res, nil
 }
 
 // applyLimit wraps a SELECT with an outer LIMIT when one is requested and
-// the statement is a read query without its own LIMIT.
-func applyLimit(sqlText string, limit int) string {
+// the statement is a read query without its own LIMIT. In probe mode it
+// requests limit+1 rows so the caller can detect truncation.
+func applyLimit(sqlText string, limit int, probe bool) string {
 	if limit <= 0 || !selectRe.MatchString(sqlText) {
 		return sqlText
 	}
 	if hasLimit(sqlText) {
 		return sqlText
 	}
-	// Strip a trailing semicolon (and surrounding whitespace) so the wrapped
-	// subquery remains valid SQL.
+	// Strip a trailing semicolon so the wrapped subquery stays valid SQL.
 	cleaned := strings.TrimRight(strings.TrimSpace(sqlText), ";")
-	return fmt.Sprintf("SELECT * FROM (%s) AS _q LIMIT %d", cleaned, limit)
+	n := limit
+	if probe {
+		n = limit + 1
+	}
+	return fmt.Sprintf("SELECT * FROM (%s) AS _q LIMIT %d", cleaned, n)
 }
 
 var ownLimitRe = regexp.MustCompile(`(?i)\bLIMIT\b\s+\d+`)

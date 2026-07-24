@@ -79,3 +79,26 @@ func TestTSVCommaInValue(t *testing.T) {
 	assert.Contains(t, out, "a,b")
 	assert.NotContains(t, out, "a\tb")
 }
+
+func TestReadJSONOmitsRowsAffectedAndAddsMeta(t *testing.T) {
+	r := result.Result{Columns: []string{"id"}, Rows: [][]any{{1}}, Truncated: true}
+	out := ReadJSON(r, 1000)
+	var env struct {
+		Success      bool           `json:"success"`
+		Data         struct{ Rows [][]any `json:"rows"` } `json:"data"`
+		RowsAffected *int           `json:"rows_affected"` // pointer: nil when absent
+		Meta         map[string]any `json:"meta"`
+	}
+	assert.NoError(t, json.Unmarshal([]byte(out), &env))
+	assert.True(t, env.Success)
+	assert.Nil(t, env.RowsAffected) // SELECT omits rows_affected
+	assert.Equal(t, true, env.Meta["truncated"])
+	assert.Equal(t, float64(1000), env.Meta["limit"])
+}
+
+func TestJSONL(t *testing.T) {
+	r := result.Result{Columns: []string{"id", "name"}, Rows: [][]any{{1, "a"}, {nil, "b"}}}
+	out, err := Format(r, "jsonl")
+	assert.NoError(t, err)
+	assert.Equal(t, `{"id":1,"name":"a"}`+"\n"+`{"id":null,"name":"b"}`+"\n", out)
+}

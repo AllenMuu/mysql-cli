@@ -11,6 +11,7 @@ type Result struct {
 	Rows         [][]any
 	RowsAffected int64
 	LastInsertID int64
+	Truncated    bool
 }
 
 // Empty returns a zero-valued Result for operations that produce no rows.

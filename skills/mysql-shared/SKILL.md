@@ -1,6 +1,6 @@
 ---
 name: mysql-shared
-version: 1.0.0
+version: 1.2.0
 description: >
   mysql-cli 共享规则:配置与数据源、全局 flag、安全模型、稳定退出码、错误自修复、输出格式。
   使用 mysql-query 或 mysql-schema 技能前 MUST 先用 Read 加载本技能。也在用户询问
@@ -9,8 +9,8 @@ metadata:
   binary: mysql-cli
   config_file: ~/.config/mysql-cli/config.toml
   default_output: json
-  output_formats: json | table | csv | tsv
-  safety_model: read-only by default; --write (DML), --write --ddl (DDL), --yes (destructive)
+  output_formats: json | table | csv | tsv | jsonl
+  safety_model: read-only by default; --write (DML), --write --ddl (DDL), --yes (destructive); SELECT 默认 cap 1000 (--no-limit 关)
   license: MIT
   replaces: designcomputer/mysql_mcp_server
 ---
@@ -52,11 +52,10 @@ ls ~/.config/mysql-cli/config.toml
 
 If missing, `mysql-cli` still works via `MYSQL_*` env vars or `--host/--port/...`
 overrides, but a config file is the normal path. Resolution priority is
-**CLI flag > env > file > default**. Passwords support `${ENV}` placeholders.
+**CLI flag > env > project-level (trusted) > global > default** (see Project-level Config below). Passwords support `${ENV}` placeholders (expanded only in trusted configs).
 
 若不存在,仍可通过 `MYSQL_*` 环境变量或 `--host/--port/...` 覆盖运行,
-但配置文件是常规路径。解析优先级:**CLI flag > env > file > default**。
-密码支持 `${ENV}` 占位符。
+但配置文件是常规路径。解析优先级:**CLI flag > env > 项目级(已信任) > 全局 > default**(见下文「项目级配置」)。密码支持 `${ENV}` 占位符(仅在已信任配置中展开)。
 
 ### 2. Datasource reachable / 数据源可达
 
@@ -78,6 +77,26 @@ If the config defines multiple `[datasource.<name>]` profiles, select one with
 若配置了多个 `[datasource.<name>]`,用 `-d <name>` 指定;否则用 `default` 条目。
 
 ---
+
+## Project-level Config / 项目级配置
+
+mysql-cli 支持项目级配置,与全局同构、覆盖式合并(类似 MCP 的 `.mcp.json`)。
+
+- **项目级 config 位置**:`<project-root>/.config/mysql-cli/config.toml`。从 cwd 逐级向上查找,首个即停(到 home/fs root 为止)。与全局 `~/.config/mysql-cli/config.toml` 共享相对路径 `.config/mysql-cli/config.toml`,仅根不同。
+- **信任机制(安全)**:项目级 config 默认**不加载**。首次需在项目目录下执行 `mysql-cli config trust`,把项目根写入信任清单 `~/.config/mysql-cli/trusted`。未信任时**静默回退全局**(exit 0,不报错);`${ENV}` 密码占位符仅在已信任的项目级 config 中展开--防止恶意仓库套取本地环境变量或劫持连接。
+- **优先级链**:`--config` flag > `MYSQL_CLI_CONFIG` env > 项目级(已信任) > 全局 > `MYSQL_*` 字段级覆盖 > default。`--config` 或 `MYSQL_CLI_CONFIG` 指定后只读该文件,跳过自动发现。
+- **覆盖式合并**:同名 datasource 整体替换(项目级胜,含 SSH 子表),不同名取并集;`default`/`default_limit` 项目级覆盖全局。
+
+### config 子命令族 / config subcommands
+
+| 命令 | 作用 |
+|---|---|
+| `mysql-cli config path` `[-j]` | 显示生效文件链 + 信任状态(project 标 `trusted` / `untrusted, skipped` + global) |
+| `mysql-cli config show` `[name]` `[-j]` | 显示合并后最终配置(密码脱敏:明文->`***`,`${ENV}` 原样) |
+| `mysql-cli config trust [dir]` | 信任项目根(默认检测到的项目根),写入信任清单 |
+| `mysql-cli config init [--project\|--global] [--force]` | 生成模板 config.toml |
+
+> **自省提示**:查询结果或连接不符合预期时,先 `mysql-cli config path` 查信任状态,再 `mysql-cli config show` 查合并后配置(密码已脱敏)。
 
 ## Global Flags / 全局 flag
 
@@ -129,6 +148,18 @@ non-JSON formats, errors render as `Error [<CODE>]: <message>`.
 
 用 `-f table`/`-f csv`/`-f tsv` 切换人类可读格式。非 JSON 格式下错误渲染为
 `Error [<CODE>]: <message>`。
+
+### 默认行数 cap / Default row cap
+
+SELECT 不带 LIMIT 时,mysql-cli 默认只返回前 1000 行并在 `meta.truncated=true` 标记(用 cap+1 探测,零额外查询)。
+
+- `--limit N`:显式要 N 行,精确返回,不探测截断
+- `--no-limit`:关闭默认 cap,返回全表(危险,可能撑爆 context)
+- `default_limit`(config.toml 顶层)/ `MYSQL_CLI_DEFAULT_LIMIT`(env):调默认 cap 值
+- 优先级:`--limit` > `--no-limit` > config > env > 1000
+- 见 `truncated:true` 时,要全量需 `--no-limit` 或先 `SELECT COUNT(*)` 评估
+
+`--format jsonl`:每行一个 JSON 对象(`{"col":val,...}`),NULL 为 `null`,比 json 省 token;截断信息走 stderr。
 
 ---
 

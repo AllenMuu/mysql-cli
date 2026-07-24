@@ -30,25 +30,29 @@ const (
 
 // Globals carries parsed global flags shared by all subcommands.
 type Globals struct {
-	Datasource string
-	Format     string
-	Write      bool
-	DDL        bool
-	Yes        bool
-	Limit      int
-	Timeout    string
-	ConfigPath string
-	Host       string
-	Port       int
-	User       string
-	Password   string
-	Database   string
-	out        io.Writer
+	Datasource     string
+	Format         string
+	Write          bool
+	DDL            bool
+	Yes            bool
+	Limit          int
+	NoLimit        bool
+	DefaultLimit   int
+	Timeout        string
+	ConfigPath     string
+	ConfigExplicit bool // true when --config was explicitly set on the command line
+	Host           string
+	Port           int
+	User           string
+	Password       string
+	Database       string
+	out            io.Writer
+	eout           io.Writer
 }
 
 // Run parses args and executes; returns the process exit code.
 func Run(args []string) int {
-	g := &Globals{Format: "json", out: os.Stdout}
+	g := &Globals{Format: "json", out: os.Stdout, eout: os.Stderr}
 	root := newRootCmd(g)
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
@@ -68,8 +72,9 @@ func newRootCmd(g *Globals) *cobra.Command {
 		SilenceUsage:  true,
 		Version:       version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if g.Format != "json" && g.Format != "table" && g.Format != "csv" && g.Format != "tsv" {
-				return fmt.Errorf("invalid format %q (want json|table|csv|tsv)", g.Format)
+			g.ConfigExplicit = cmd.Flags().Changed("config")
+			if g.Format != "json" && g.Format != "table" && g.Format != "csv" && g.Format != "tsv" && g.Format != "jsonl" {
+				return fmt.Errorf("invalid format %q (want json|table|csv|tsv|jsonl)", g.Format)
 			}
 			if _, err := time.ParseDuration(g.Timeout); err != nil {
 				return fmt.Errorf("invalid timeout %q: %w", g.Timeout, err)
@@ -79,11 +84,12 @@ func newRootCmd(g *Globals) *cobra.Command {
 	}
 	pf := root.PersistentFlags()
 	pf.StringVarP(&g.Datasource, "datasource", "d", "", "named datasource from config")
-	pf.StringVarP(&g.Format, "format", "f", "json", "output format: json|table|csv|tsv")
+	pf.StringVarP(&g.Format, "format", "f", "json", "output format: json|table|csv|tsv|jsonl")
 	pf.BoolVar(&g.Write, "write", false, "allow DML (INSERT/UPDATE/DELETE)")
 	pf.BoolVar(&g.DDL, "ddl", false, "allow DDL (requires --write)")
 	pf.BoolVar(&g.Yes, "yes", false, "confirm destructive operations")
 	pf.IntVar(&g.Limit, "limit", 0, "row limit for SELECT queries")
+	pf.BoolVar(&g.NoLimit, "no-limit", false, "disable default row cap for SELECT (returns full result set)")
 	pf.StringVar(&g.Timeout, "timeout", "30s", "query timeout")
 	pf.StringVar(&g.ConfigPath, "config", defaultConfigPath(), "config file path")
 	pf.StringVar(&g.Host, "host", "", "MySQL host")
@@ -104,6 +110,7 @@ func newRootCmd(g *Globals) *cobra.Command {
 		newExploreCmd(g),
 		newAnalyzeCmd(g),
 		newSkillCmd(),
+		newConfigCmd(g),
 		newInitCmd(),
 		newVersionCmd(),
 	)

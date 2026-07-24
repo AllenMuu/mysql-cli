@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/AllenMuu/mysql-cli/internal/config"
@@ -25,21 +26,32 @@ func defaultConfigPath() string {
 }
 
 func (g *Globals) resolve() (config.Datasource, error) {
-	var cfg *config.Config
-	if _, err := os.Stat(g.ConfigPath); err == nil {
-		cfg, err = config.LoadFile(g.ConfigPath)
-		if err != nil {
-			return config.Datasource{}, err
-		}
+	cwd, _ := os.Getwd()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	cfgFlag := ""
+	if g.ConfigExplicit {
+		cfgFlag = g.ConfigPath
+	}
+	merged, _, err := config.Load(config.LoadOpts{
+		ConfigFlag: cfgFlag,
+		EnvConfig:  os.Getenv("MYSQL_CLI_CONFIG"),
+		Cwd:        cwd,
+		Home:       home,
+		IsTrusted:  func(root string) bool { return config.IsTrusted(home, root) },
+	})
+	if err != nil {
+		return config.Datasource{}, err
+	}
+	if merged != nil {
+		g.DefaultLimit = merged.DefaultLimit
 	}
 	over := config.Datasource{
 		Host: g.Host, Port: g.Port, User: g.User, Password: g.Password, Database: g.Database,
 	}
-	ds, err := config.Resolve(cfg, g.Datasource, over)
-	if err != nil {
-		return config.Datasource{}, err
-	}
-	return ds, nil
+	return config.Resolve(merged, g.Datasource, over)
 }
 
 func (g *Globals) openPool() (*conn.Pool, error) {
@@ -53,6 +65,54 @@ func (g *Globals) openPool() (*conn.Pool, error) {
 func (g *Globals) opts() query.Options {
 	to, _ := time.ParseDuration(g.Timeout)
 	return query.Options{Write: g.Write, DDL: g.DDL, Yes: g.Yes, Limit: g.Limit, Timeout: to}
+}
+
+// defaultCap resolves the default row cap: config > env > built-in 1000.
+func (g *Globals) defaultCap() int {
+	if g.DefaultLimit > 0 {
+		return g.DefaultLimit
+	}
+	if v, err := strconv.Atoi(os.Getenv("MYSQL_CLI_DEFAULT_LIMIT")); err == nil && v > 0 {
+		return v
+	}
+	return 1000
+}
+
+// resolveCap decides (limit, probe) for a read query:
+//
+//	--limit explicit -> (g.Limit, false)   exact N, no probe
+//	--no-limit       -> (0, false)          no cap
+//	otherwise        -> (defaultCap, true)  default cap with cap+1 probe
+func (g *Globals) resolveCap(cmd *cobra.Command) (int, bool) {
+	if cmd.Flags().Changed("limit") {
+		return g.Limit, false
+	}
+	if g.NoLimit {
+		return 0, false
+	}
+	return g.defaultCap(), true
+}
+
+// emitReadResult renders a read query result: json -> ReadJSON (slim envelope),
+// jsonl -> line stream + stderr truncated notice, else -> Format.
+func (g *Globals) emitReadResult(r result.Result, err error, limit int) {
+	if err != nil {
+		fmt.Fprintln(g.out, formatErr(err, g.Format))
+		return
+	}
+	switch g.Format {
+	case "json":
+		fmt.Fprint(g.out, format.ReadJSON(r, limit))
+	case "jsonl":
+		out, _ := format.Format(r, "jsonl")
+		fmt.Fprint(g.out, out)
+		if r.Truncated {
+			fmt.Fprintf(g.eout, "# truncated:true limit:%d\n", limit)
+		}
+	default:
+		out, _ := format.Format(r, g.Format)
+		fmt.Fprint(g.out, out)
+	}
 }
 
 func (g *Globals) emitResult(r result.Result, err error) {
@@ -96,11 +156,14 @@ func newQueryCmd(g *Globals) *cobra.Command {
 			// writes through QueryContext, which the driver rejects.
 			switch safety.Classify(sqlText) {
 			case safety.CategoryRead, safety.CategoryUnknown:
-				r, err = query.Execute(ctx, pool, sqlText, g.opts())
+				opts := g.opts()
+				opts.Limit, opts.Probe = g.resolveCap(cmd)
+				r, err = query.Execute(ctx, pool, sqlText, opts)
+				g.emitReadResult(r, err, opts.Limit)
 			default:
 				r, err = query.ExecuteWrite(ctx, pool, sqlText, g.opts())
+				g.emitResult(r, err)
 			}
-			g.emitResult(r, err)
 			return err
 		},
 	}

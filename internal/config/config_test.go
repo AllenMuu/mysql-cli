@@ -179,3 +179,32 @@ func writeTmp(t *testing.T, content string) string {
 	}
 	return p
 }
+
+func TestDefaultLimitFromConfig(t *testing.T) {
+	toml := `
+default = "dev"
+default_limit = 2500
+
+[datasource.dev]
+host = "127.0.0.1"
+port = 3306
+`
+	tmp := t.TempDir() + "/config.toml"
+	assert.NoError(t, os.WriteFile(tmp, []byte(toml), 0644))
+	cfg, err := LoadFile(tmp)
+	assert.NoError(t, err)
+	assert.Equal(t, 2500, cfg.DefaultLimit)
+}
+
+func TestDefaultLimitZeroWhenUnset(t *testing.T) {
+	toml := `
+default = "dev"
+[datasource.dev]
+host = "127.0.0.1"
+`
+	tmp := t.TempDir() + "/config.toml"
+	assert.NoError(t, os.WriteFile(tmp, []byte(toml), 0644))
+	cfg, err := LoadFile(tmp)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, cfg.DefaultLimit)
+}
