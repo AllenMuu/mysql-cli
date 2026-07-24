@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -158,4 +159,21 @@ func TestExecuteProbeNoTruncate(t *testing.T) {
 	assert.NoError(t, err)
 	assert.False(t, r.Truncated)
 	assert.Equal(t, 2, len(r.Rows))
+}
+
+func TestExecuteProbeSkipsNonSelect(t *testing.T) {
+	// SHOW/DESCRIBE/EXPLAIN are CategoryRead but applyLimit refuses to wrap
+	// them (selectRe only matches SELECT|WITH). The post-scan truncation
+	// must also skip them so a large SHOW result is not silently truncated.
+	pool, mock := newMock(t)
+	rows := sqlmock.NewRows([]string{"Variable_name", "Value"}).
+		AddRow("a", fmt.Sprintf("v%d", 1)).
+		AddRow("b", fmt.Sprintf("v%d", 2)).
+		AddRow("c", fmt.Sprintf("v%d", 3))
+	// ExpectQuery takes a regex; escape the space and treat the query literally.
+	mock.ExpectQuery("SHOW VARIABLES").WillReturnRows(rows)
+	r, err := Execute(context.Background(), pool, "SHOW VARIABLES", Options{Limit: 2, Probe: true})
+	assert.NoError(t, err)
+	assert.False(t, r.Truncated)
+	assert.Equal(t, 3, len(r.Rows))
 }

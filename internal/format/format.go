@@ -73,7 +73,8 @@ func ErrorJSON(code, message string) string {
 }
 
 // Format renders r in the requested format. csv/tsv encode NULL as empty
-// string; table renders NULL as "NULL"; json is handled by SuccessJSON.
+// string; table renders NULL as "NULL"; jsonl renders each row as a JSON
+// object with NULL as native null; json is handled by SuccessJSON.
 func Format(r result.Result, format string) (string, error) {
 	switch strings.ToLower(format) {
 	case "json":

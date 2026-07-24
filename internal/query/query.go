@@ -87,7 +87,7 @@ func Execute(ctx context.Context, pool *conn.Pool, sqlText string, opts Options)
 	if err := rows.Err(); err != nil {
 		return result.Empty(), fmt.Errorf("%w: %v", ErrSQL, err)
 	}
-	if opts.Probe && opts.Limit > 0 && len(res.Rows) > opts.Limit {
+	if opts.Probe && opts.Limit > 0 && selectRe.MatchString(sqlText) && len(res.Rows) > opts.Limit {
 		res.Truncated = true
 		res.Rows = res.Rows[:opts.Limit]
 	}
@@ -104,6 +104,7 @@ func applyLimit(sqlText string, limit int, probe bool) string {
 	if hasLimit(sqlText) {
 		return sqlText
 	}
+	// Strip a trailing semicolon so the wrapped subquery stays valid SQL.
 	cleaned := strings.TrimRight(strings.TrimSpace(sqlText), ";")
 	n := limit
 	if probe {

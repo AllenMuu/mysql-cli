@@ -112,6 +112,16 @@ func TestResolveCapExplicitLimit(t *testing.T) {
 	assert.False(t, probe)
 }
 
+func TestResolveCapLimitWinsOverNoLimit(t *testing.T) {
+	g := &Globals{NoLimit: true, Limit: 50}
+	cmd := &cobra.Command{}
+	cmd.Flags().Int("limit", 0, "")
+	cmd.Flags().Set("limit", "50")
+	limit, probe := g.resolveCap(cmd)
+	assert.Equal(t, 50, limit)
+	assert.False(t, probe)
+}
+
 func TestEmitReadJSONOmitsRowsAffected(t *testing.T) {
 	var out bytes.Buffer
 	g := &Globals{Format: "json", out: &out}
