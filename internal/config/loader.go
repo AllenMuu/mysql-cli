@@ -33,6 +33,81 @@ func DiscoverProject(start, home string) (root, configPath string, found bool) {
 // same-name datasource is replaced wholesale (including SSH subtable),
 // distinct names are unioned, Default/DefaultLimit override when non-zero/non-empty.
 // high==nil returns low unchanged (nil-safe).
+// PathEntry is one resolved config file in the chain (diagnostic view).
+type PathEntry struct {
+	Path    string // absolute config file path
+	Kind    string // "explicit" | "project" | "global"
+	Trusted bool   // true for explicit/global; project-only signal
+	Exists  bool   // file present on disk
+}
+
+// LoadOpts controls path resolution, project discovery, and trust checks.
+type LoadOpts struct {
+	ConfigFlag string                        // --config value ("" if not explicitly set)
+	EnvConfig  string                        // MYSQL_CLI_CONFIG value ("" if unset)
+	Cwd        string                        // project discovery start dir
+	Home       string                        // home dir: global config + trust store
+	IsTrusted  func(projectRoot string) bool // injectable; nil -> always false (Phase 1)
+}
+
+// globalConfigPath returns <home>/.config/mysql-cli/config.toml.
+func globalConfigPath(home string) string { return filepath.Join(home, relConfigPath) }
+
+// ResolvePathChain returns the diagnostic view of all discovered entries
+// (including an untrusted project entry marked Trusted=false), ordered low->high.
+func ResolvePathChain(opts LoadOpts) ([]PathEntry, error) {
+	var entries []PathEntry
+	// explicit single-file (flag or env) short-circuits discovery
+	if opts.ConfigFlag != "" || opts.EnvConfig != "" {
+		p := opts.ConfigFlag
+		if p == "" {
+			p = opts.EnvConfig
+		}
+		_, err := os.Stat(p)
+		entries = []PathEntry{{Path: p, Kind: "explicit", Trusted: true, Exists: err == nil}}
+		return entries, nil
+	}
+	// global first (low priority), then project (higher priority)
+	gp := globalConfigPath(opts.Home)
+	_, err := os.Stat(gp)
+	entries = append(entries, PathEntry{Path: gp, Kind: "global", Trusted: true, Exists: err == nil})
+	if root, p, found := DiscoverProject(opts.Cwd, opts.Home); found {
+		trusted := false
+		if opts.IsTrusted != nil {
+			trusted = opts.IsTrusted(root)
+		}
+		entries = append(entries, PathEntry{Path: p, Kind: "project", Trusted: trusted, Exists: true})
+	}
+	return entries, nil
+}
+
+// Load resolves the chain, loads trusted/explicit/global entries, merges -> Config.
+// Returns (mergedConfig, entries, err). mergedConfig is nil if no file was loaded.
+// Trust is enforced at merge time: an untrusted project entry is NOT loaded,
+// so the merged Config contains only trusted sources.
+func Load(opts LoadOpts) (*Config, []PathEntry, error) {
+	entries, err := ResolvePathChain(opts)
+	if err != nil {
+		return nil, entries, err
+	}
+	var merged *Config
+	// load low->high: global first, then project (if trusted). explicit is single.
+	for _, e := range entries {
+		if !e.Exists {
+			continue
+		}
+		if e.Kind == "project" && !e.Trusted {
+			continue // untrusted project: skip load entirely
+		}
+		cfg, err := LoadFile(e.Path)
+		if err != nil {
+			return nil, entries, err
+		}
+		merged = MergeConfigs(merged, cfg)
+	}
+	return merged, entries, nil
+}
+
 func MergeConfigs(low, high *Config) *Config {
 	if high == nil {
 		return low

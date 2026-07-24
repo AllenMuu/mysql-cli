@@ -111,3 +111,111 @@ func TestMergeConfigs_DefaultLimitZeroIsUnset(t *testing.T) {
 	highSet := &Config{DefaultLimit: 500}
 	assert.Equal(t, 500, MergeConfigs(low, highSet).DefaultLimit)
 }
+
+func writeCfgAt(t *testing.T, path, content string) {
+	t.Helper()
+	assert.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	assert.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+}
+
+func TestLoad_ConfigFlagSingleFile(t *testing.T) {
+	home := t.TempDir()
+	explicit := filepath.Join(home, "x.toml")
+	writeCfgAt(t, explicit, `default = "a"
+[datasource.a]
+host = "ha"
+`)
+	cfg, entries, err := Load(LoadOpts{ConfigFlag: explicit, Home: home, Cwd: home})
+	assert.NoError(t, err)
+	assert.Equal(t, "ha", cfg.Datasources["a"].Host)
+	assert.Len(t, entries, 1)
+	assert.Equal(t, "explicit", entries[0].Kind)
+	assert.True(t, entries[0].Trusted)
+}
+
+func TestLoad_EnvConfigSingleFile(t *testing.T) {
+	home := t.TempDir()
+	env := filepath.Join(home, "e.toml")
+	writeCfgAt(t, env, `[datasource.b]
+host = "hb"
+`)
+	cfg, entries, err := Load(LoadOpts{EnvConfig: env, Home: home, Cwd: home})
+	assert.NoError(t, err)
+	assert.Equal(t, "hb", cfg.Datasources["b"].Host)
+	assert.Equal(t, "explicit", entries[0].Kind) // env path treated as explicit single-file
+}
+
+func TestLoad_ProjectTrustedMergedOverGlobal(t *testing.T) {
+	home := t.TempDir()
+	globalPath := filepath.Join(home, relConfigPath)
+	writeCfgAt(t, globalPath, `default = "g"
+[datasource.g]
+host = "gh"
+[datasource.shared]
+host = "sh"
+`)
+	projRoot := filepath.Join(home, "proj")
+	projPath := filepath.Join(projRoot, relConfigPath)
+	writeCfgAt(t, projPath, `default = "p"
+[datasource.p]
+host = "ph"
+[datasource.shared]
+host = "projsh"
+`)
+	cfg, entries, err := Load(LoadOpts{
+		Cwd: projRoot, Home: home,
+		IsTrusted: func(string) bool { return true }, // trusted
+	})
+	assert.NoError(t, err)
+	// union: g (global-only) + p (project-only) + shared (project wins)
+	assert.Equal(t, "gh", cfg.Datasources["g"].Host)
+	assert.Equal(t, "ph", cfg.Datasources["p"].Host)
+	assert.Equal(t, "projsh", cfg.Datasources["shared"].Host)
+	assert.Equal(t, "p", cfg.DefaultDatasource)
+	// entries: project + global, both trusted
+	assert.Len(t, entries, 2)
+}
+
+func TestLoad_ProjectUntrustedFallsBackToGlobal(t *testing.T) {
+	home := t.TempDir()
+	globalPath := filepath.Join(home, relConfigPath)
+	writeCfgAt(t, globalPath, `[datasource.g]
+host = "gh"
+`)
+	projRoot := filepath.Join(home, "proj")
+	writeCfgAt(t, filepath.Join(projRoot, relConfigPath), `[datasource.p]
+host = "ph"
+`)
+	cfg, entries, err := Load(LoadOpts{
+		Cwd: projRoot, Home: home,
+		IsTrusted: func(string) bool { return false }, // untrusted
+	})
+	assert.NoError(t, err) // silent fallback, no error
+	assert.Equal(t, "gh", cfg.Datasources["g"].Host)
+	assert.NotContains(t, cfg.Datasources, "p") // project NOT loaded
+	// entries still show project entry (diagnostic), marked untrusted
+	var projEntry *PathEntry
+	for i := range entries {
+		if entries[i].Kind == "project" {
+			projEntry = &entries[i]
+		}
+	}
+	if assert.NotNil(t, projEntry) {
+		assert.False(t, projEntry.Trusted)
+	}
+}
+
+func TestLoad_NoConfigReturnsNil(t *testing.T) {
+	home := t.TempDir()
+	cfg, _, err := Load(LoadOpts{Cwd: home, Home: home})
+	assert.NoError(t, err)
+	assert.Nil(t, cfg)
+}
+
+func TestLoad_TomlSyntaxError(t *testing.T) {
+	home := t.TempDir()
+	bad := filepath.Join(home, "bad.toml")
+	writeCfgAt(t, bad, `default = "unclosed`)
+	_, _, err := Load(LoadOpts{ConfigFlag: bad, Home: home, Cwd: home})
+	assert.Error(t, err)
+}
