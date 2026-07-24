@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/AllenMuu/mysql-cli/internal/result"
@@ -138,4 +140,24 @@ func TestEmitReadJSONLTruncatedStderr(t *testing.T) {
 	g.emitReadResult(r, nil, 1000)
 	assert.Contains(t, out.String(), `{"id":1}`)
 	assert.Contains(t, eout.String(), "# truncated:true limit:1000")
+}
+
+// Behavioral compat: no project + no env + no explicit --config behaves as today.
+func TestResolveCompatNoConfig(t *testing.T) {
+	// HOME isolated -> no global config -> env/default fallback.
+	t.Setenv("HOME", t.TempDir())
+	code := Run([]string{"query", "SELECT 1", "--host", "127.0.0.1", "--port", "1"})
+	assert.Equal(t, ExitConnFailed, code) // reached connection stage (config ok, conn fails)
+}
+
+// --config single-file still works and is the only source.
+func TestResolveCompatExplicitConfigFlag(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "c.toml")
+	os.WriteFile(cfg, []byte(`[datasource.x]
+host = "h"
+`), 0o600)
+	t.Setenv("HOME", t.TempDir())
+	code := Run([]string{"query", "SELECT 1", "-d", "nonexistent", "--config", cfg})
+	assert.Equal(t, ExitConfigError, code) // unknown datasource -> config error (file loaded, name missing)
 }

@@ -40,6 +40,7 @@ type Globals struct {
 	DefaultLimit int
 	Timeout      string
 	ConfigPath   string
+	ConfigExplicit bool // true when --config was explicitly set on the command line
 	Host         string
 	Port         int
 	User         string
@@ -71,6 +72,7 @@ func newRootCmd(g *Globals) *cobra.Command {
 		SilenceUsage:  true,
 		Version:       version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			g.ConfigExplicit = cmd.Flags().Changed("config")
 			if g.Format != "json" && g.Format != "table" && g.Format != "csv" && g.Format != "tsv" && g.Format != "jsonl" {
 				return fmt.Errorf("invalid format %q (want json|table|csv|tsv|jsonl)", g.Format)
 			}
@@ -108,6 +110,7 @@ func newRootCmd(g *Globals) *cobra.Command {
 		newExploreCmd(g),
 		newAnalyzeCmd(g),
 		newSkillCmd(),
+		newConfigCmd(g),
 		newInitCmd(),
 		newVersionCmd(),
 	)

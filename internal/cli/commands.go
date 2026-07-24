@@ -26,24 +26,33 @@ func defaultConfigPath() string {
 }
 
 func (g *Globals) resolve() (config.Datasource, error) {
-	var cfg *config.Config
-	if _, err := os.Stat(g.ConfigPath); err == nil {
-		cfg, err = config.LoadFile(g.ConfigPath)
-		if err != nil {
-			return config.Datasource{}, err
-		}
-		if cfg != nil {
-			g.DefaultLimit = cfg.DefaultLimit
-		}
+	cwd, _ := os.Getwd()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	cfgFlag := ""
+	if g.ConfigExplicit {
+		cfgFlag = g.ConfigPath
+	}
+	merged, _, err := config.Load(config.LoadOpts{
+		ConfigFlag: cfgFlag,
+		EnvConfig:  os.Getenv("MYSQL_CLI_CONFIG"),
+		Cwd:        cwd,
+		Home:       home,
+		// IsTrusted left nil in Phase 1 -> project never loaded (compat).
+		// Task 6 wires the real trust store here.
+	})
+	if err != nil {
+		return config.Datasource{}, err
+	}
+	if merged != nil {
+		g.DefaultLimit = merged.DefaultLimit
 	}
 	over := config.Datasource{
 		Host: g.Host, Port: g.Port, User: g.User, Password: g.Password, Database: g.Database,
 	}
-	ds, err := config.Resolve(cfg, g.Datasource, over)
-	if err != nil {
-		return config.Datasource{}, err
-	}
-	return ds, nil
+	return config.Resolve(merged, g.Datasource, over)
 }
 
 func (g *Globals) openPool() (*conn.Pool, error) {
