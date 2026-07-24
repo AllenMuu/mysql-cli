@@ -28,3 +28,34 @@ func DiscoverProject(start, home string) (root, configPath string, found bool) {
 		dir = filepath.Dir(dir)
 	}
 }
+
+// MergeConfigs overlays high onto low using覆盖式 (override) semantics:
+// same-name datasource is replaced wholesale (including SSH subtable),
+// distinct names are unioned, Default/DefaultLimit override when non-zero/non-empty.
+// high==nil returns low unchanged (nil-safe).
+func MergeConfigs(low, high *Config) *Config {
+	if high == nil {
+		return low
+	}
+	if low == nil {
+		low = &Config{Datasources: map[string]Datasource{}}
+	}
+	out := &Config{
+		DefaultDatasource: low.DefaultDatasource,
+		DefaultLimit:      low.DefaultLimit,
+		Datasources:       map[string]Datasource{},
+	}
+	for k, v := range low.Datasources {
+		out.Datasources[k] = v
+	}
+	for k, v := range high.Datasources {
+		out.Datasources[k] = v // whole-replace (shallow copy of Datasource value is fine: it's a value type, SSH ptr shared with high)
+	}
+	if high.DefaultDatasource != "" {
+		out.DefaultDatasource = high.DefaultDatasource
+	}
+	if high.DefaultLimit != 0 {
+		out.DefaultLimit = high.DefaultLimit
+	}
+	return out
+}

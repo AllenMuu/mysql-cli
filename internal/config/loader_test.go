@@ -63,3 +63,51 @@ func TestDiscoverProject_NotFound(t *testing.T) {
 	_, _, found := DiscoverProject(cwd, home)
 	assert.False(t, found)
 }
+
+func TestMergeConfigs_NilHigh(t *testing.T) {
+	low := &Config{DefaultDatasource: "g", Datasources: map[string]Datasource{"g": {Host: "h"}}}
+	out := MergeConfigs(low, nil)
+	assert.Same(t, low, out) // nil-safe: returns low directly
+}
+
+func TestMergeConfigs_SameNameReplaced(t *testing.T) {
+	low := &Config{Datasources: map[string]Datasource{"prod": {Host: "global-prod", User: "guser"}}}
+	high := &Config{Datasources: map[string]Datasource{"prod": {Host: "proj-prod"}}}
+	out := MergeConfigs(low, high)
+	// whole-replace: high.prod wins entirely, low.prod.User is gone
+	assert.Equal(t, "proj-prod", out.Datasources["prod"].Host)
+	assert.Equal(t, "", out.Datasources["prod"].User)
+}
+
+func TestMergeConfigs_UnionOfNames(t *testing.T) {
+	low := &Config{Datasources: map[string]Datasource{"a": {Host: "ga"}}}
+	high := &Config{Datasources: map[string]Datasource{"b": {Host: "pb"}}}
+	out := MergeConfigs(low, high)
+	assert.Len(t, out.Datasources, 2)
+	assert.Equal(t, "ga", out.Datasources["a"].Host)
+	assert.Equal(t, "pb", out.Datasources["b"].Host)
+}
+
+func TestMergeConfigs_SSHReplacedWholesale(t *testing.T) {
+	low := &Config{Datasources: map[string]Datasource{"d": {SSH: &SSHConfig{Host: "gh"}}}}
+	high := &Config{Datasources: map[string]Datasource{"d": {SSH: &SSHConfig{Host: "ph"}}}}
+	out := MergeConfigs(low, high)
+	assert.Equal(t, "ph", out.Datasources["d"].SSH.Host)
+}
+
+func TestMergeConfigs_DefaultOverride(t *testing.T) {
+	low := &Config{DefaultDatasource: "g"}
+	high := &Config{DefaultDatasource: "p"}
+	assert.Equal(t, "p", MergeConfigs(low, high).DefaultDatasource)
+	// high.Default empty -> keep low
+	high2 := &Config{Datasources: map[string]Datasource{}}
+	assert.Equal(t, "g", MergeConfigs(low, high2).DefaultDatasource)
+}
+
+func TestMergeConfigs_DefaultLimitZeroIsUnset(t *testing.T) {
+	low := &Config{DefaultLimit: 2500}
+	highZero := &Config{DefaultLimit: 0}
+	assert.Equal(t, 2500, MergeConfigs(low, highZero).DefaultLimit) // 0 = unset -> keep low
+	highSet := &Config{DefaultLimit: 500}
+	assert.Equal(t, 500, MergeConfigs(low, highSet).DefaultLimit)
+}
