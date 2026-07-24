@@ -21,7 +21,14 @@ func TestConfigTrust_DefaultCwd(t *testing.T) {
 	cfgDir := filepath.Join(projRoot, ".config", "mysql-cli")
 	os.MkdirAll(cfgDir, 0o755)
 	os.WriteFile(filepath.Join(cfgDir, "config.toml"), []byte("# stub"), 0o600)
-	os.Chdir(projRoot) // trust cwd's detected project root
+	// chdir into a SUBDIR of projRoot (not projRoot itself) so DiscoverProject
+	// must walk up to find projRoot/.config/mysql-cli/config.toml. If discovery
+	// were broken (found=false), the fallback root would be this subdir, and
+	// AddTrust would record the subdir -- not projRoot -- making the assertion
+	// below genuinely distinguish the discovery path from the fallback.
+	sub := filepath.Join(projRoot, "sub")
+	os.MkdirAll(sub, 0o755)
+	os.Chdir(sub)
 	code := Run([]string{"config", "trust"})
 	assert.Equal(t, ExitOK, code)
 	// trust file now contains projRoot. projRoot lives under t.TempDir() so
@@ -42,7 +49,11 @@ func TestConfigTrust_Idempotent(t *testing.T) {
 	cfgDir := filepath.Join(projRoot, ".config", "mysql-cli")
 	os.MkdirAll(cfgDir, 0o755)
 	os.WriteFile(filepath.Join(cfgDir, "config.toml"), []byte("# stub"), 0o600)
-	os.Chdir(projRoot)
+	// chdir into a subdir so DiscoverProject must walk up; if discovery were
+	// broken the fallback would record the subdir, failing the assertion.
+	sub := filepath.Join(projRoot, "sub")
+	os.MkdirAll(sub, 0o755)
+	os.Chdir(sub)
 	assert.Equal(t, ExitOK, Run([]string{"config", "trust"}))
 	assert.Equal(t, ExitOK, Run([]string{"config", "trust"})) // no duplicate
 	want, _ := filepath.EvalSymlinks(projRoot)
@@ -60,18 +71,24 @@ func TestConfigTrust_JSON(t *testing.T) {
 	cfgDir := filepath.Join(projRoot, ".config", "mysql-cli")
 	os.MkdirAll(cfgDir, 0o755)
 	os.WriteFile(filepath.Join(cfgDir, "config.toml"), []byte("# stub"), 0o600)
-	os.Chdir(projRoot)
+	// chdir into a subdir so DiscoverProject must walk up; if discovery were
+	// broken the fallback would record the subdir, failing the assertion below.
+	sub := filepath.Join(projRoot, "sub")
+	os.MkdirAll(sub, 0o755)
+	os.Chdir(sub)
 
 	// Capture os.Stdout (config trust writes via cmd.OutOrStdout() -> os.Stdout).
 	// Package tests are serial (no t.Parallel) so mutating global os.Stdout is
-	// safe; restore via t.Cleanup.
+	// safe; restore via t.Cleanup registered BEFORE mutating os.Stdout so a
+	// panic between the assignment and a later Cleanup registration cannot
+	// leak the pipe-writer as os.Stdout.
 	orig := os.Stdout
 	r, w, _ := os.Pipe()
+	t.Cleanup(func() { os.Stdout = orig; r.Close() })
 	os.Stdout = w
 	code := Run([]string{"config", "trust", "-j"})
 	w.Close()
 	os.Stdout = orig
-	t.Cleanup(func() { os.Stdout = orig; r.Close() })
 	out, _ := io.ReadAll(r)
 
 	assert.Equal(t, ExitOK, code)
