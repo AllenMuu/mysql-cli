@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bytes"
 	"testing"
 
+	"github.com/AllenMuu/mysql-cli/internal/result"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -65,4 +68,64 @@ func TestSchemaCommandsFailOnConnection(t *testing.T) {
 			assert.Equal(t, ExitConnFailed, code)
 		})
 	}
+}
+
+func TestDefaultCapFallbackTo1000(t *testing.T) {
+	g := &Globals{}
+	assert.Equal(t, 1000, g.defaultCap())
+}
+
+func TestDefaultCapFromConfig(t *testing.T) {
+	g := &Globals{DefaultLimit: 500}
+	assert.Equal(t, 500, g.defaultCap())
+}
+
+func TestDefaultCapFromEnv(t *testing.T) {
+	t.Setenv("MYSQL_CLI_DEFAULT_LIMIT", "200")
+	g := &Globals{}
+	assert.Equal(t, 200, g.defaultCap())
+}
+
+func TestResolveCapDefaultProbe(t *testing.T) {
+	g := &Globals{DefaultLimit: 500}
+	cmd := &cobra.Command{}
+	limit, probe := g.resolveCap(cmd)
+	assert.Equal(t, 500, limit)
+	assert.True(t, probe)
+}
+
+func TestResolveCapNoLimitFlag(t *testing.T) {
+	g := &Globals{NoLimit: true}
+	cmd := &cobra.Command{}
+	limit, probe := g.resolveCap(cmd)
+	assert.Equal(t, 0, limit)
+	assert.False(t, probe)
+}
+
+func TestResolveCapExplicitLimit(t *testing.T) {
+	g := &Globals{Limit: 50}
+	cmd := &cobra.Command{}
+	cmd.Flags().Int("limit", 0, "")
+	cmd.Flags().Set("limit", "50")
+	limit, probe := g.resolveCap(cmd)
+	assert.Equal(t, 50, limit)
+	assert.False(t, probe)
+}
+
+func TestEmitReadJSONOmitsRowsAffected(t *testing.T) {
+	var out bytes.Buffer
+	g := &Globals{Format: "json", out: &out}
+	r := result.Result{Columns: []string{"id"}, Rows: [][]any{{1}}, Truncated: true}
+	g.emitReadResult(r, nil, 1000)
+	assert.Contains(t, out.String(), `"truncated":true`)
+	assert.NotContains(t, out.String(), "rows_affected")
+}
+
+func TestEmitReadJSONLTruncatedStderr(t *testing.T) {
+	var out, eout bytes.Buffer
+	g := &Globals{Format: "jsonl", out: &out, eout: &eout}
+	r := result.Result{Columns: []string{"id"}, Rows: [][]any{{1}}, Truncated: true}
+	g.emitReadResult(r, nil, 1000)
+	assert.Contains(t, out.String(), `{"id":1}`)
+	assert.Contains(t, eout.String(), "# truncated:true limit:1000")
 }
