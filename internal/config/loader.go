@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
 // relConfigPath is the shared relative path for both global and project configs.
@@ -133,4 +135,82 @@ func MergeConfigs(low, high *Config) *Config {
 		out.DefaultLimit = high.DefaultLimit
 	}
 	return out
+}
+
+// TrustFilePath returns <home>/.config/mysql-cli/trusted.
+func TrustFilePath(home string) string {
+	return filepath.Join(home, relConfigPath[:len(relConfigPath)-len("config.toml")]+"trusted")
+}
+
+// ReadTrusted parses the plaintext trust file (one normalized path per line).
+// Missing file -> empty list, no error.
+func ReadTrusted(home string) ([]string, error) {
+	b, err := os.ReadFile(TrustFilePath(home))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out, nil
+}
+
+// normalizePath resolves symlinks to a canonical absolute path.
+func normalizePath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
+}
+
+// IsTrusted reports whether projectRoot (symlink-normalized) is in the trust file.
+func IsTrusted(home, projectRoot string) bool {
+	target := normalizePath(projectRoot)
+	list, err := ReadTrusted(home)
+	if err != nil {
+		return false
+	}
+	for _, e := range list {
+		if e == target {
+			return true
+		}
+	}
+	return false
+}
+
+// AddTrust appends projectRoot (normalized) to the trust file, idempotently.
+// Creates the parent dir and file with 0600 if absent.
+func AddTrust(home, projectRoot string) error {
+	target := normalizePath(projectRoot)
+	list, _ := ReadTrusted(home)
+	for _, e := range list {
+		if e == target {
+			return nil
+		}
+	}
+	list = append(list, target)
+	sort.Strings(list)
+	var b strings.Builder
+	for i, e := range list {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(e)
+	}
+	b.WriteByte('\n')
+	tf := TrustFilePath(home)
+	if err := os.MkdirAll(filepath.Dir(tf), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(tf, []byte(b.String()), 0o600)
 }

@@ -219,3 +219,44 @@ func TestLoad_TomlSyntaxError(t *testing.T) {
 	_, _, err := Load(LoadOpts{ConfigFlag: bad, Home: home, Cwd: home})
 	assert.Error(t, err)
 }
+
+func TestTrustFilePath(t *testing.T) {
+	assert.Equal(t, filepath.Join("H", ".config", "mysql-cli", "trusted"), TrustFilePath("H"))
+}
+
+func TestAddTrust_Idempotent(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "proj")
+	assert.NoError(t, os.MkdirAll(root, 0o755))
+	assert.NoError(t, AddTrust(home, root))
+	assert.NoError(t, AddTrust(home, root)) // duplicate, no error, single line
+	list, err := ReadTrusted(home)
+	assert.NoError(t, err)
+	assert.Equal(t, []string{normalizePath(root)}, list)
+}
+
+func TestIsTrusted_HitAndMiss(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "proj")
+	os.MkdirAll(root, 0o755)
+	assert.False(t, IsTrusted(home, root))
+	assert.NoError(t, AddTrust(home, root))
+	assert.True(t, IsTrusted(home, root))
+}
+
+func TestIsTrusted_SymlinkNormalized(t *testing.T) {
+	home := t.TempDir()
+	real := filepath.Join(home, "real")
+	os.MkdirAll(real, 0o755)
+	link := filepath.Join(home, "link")
+	os.Symlink(real, link)
+	assert.NoError(t, AddTrust(home, link))     // add via symlink path
+	assert.True(t, IsTrusted(home, real))        // resolves to real -> trusted
+}
+
+func TestReadTrusted_NoFileReturnsEmpty(t *testing.T) {
+	home := t.TempDir()
+	list, err := ReadTrusted(home)
+	assert.NoError(t, err)
+	assert.Empty(t, list)
+}
