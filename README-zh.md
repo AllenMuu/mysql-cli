@@ -165,8 +165,30 @@ database = "main"
 ssl_mode = "REQUIRED"
 ```
 
-解析优先级:**CLI flag > 环境变量 > 配置文件 > 默认值**。密码支持 `${ENV}` 占位符。
-原 MCP 的全部 `MYSQL_*` 环境变量同样支持,迁移零配置。
+解析优先级:**`--config` flag > `MYSQL_CLI_CONFIG` 环境变量 > 项目级(已信任) > 全局 > `MYSQL_*` 字段覆盖 > 默认值**。密码支持 `${ENV}` 占位符(仅在已信任配置中展开)。原 MCP 的全部 `MYSQL_*` 环境变量同样支持,迁移零配置。
+
+### 项目级配置
+
+mysql-cli 还会读取**项目级**配置 `<project-root>/.config/mysql-cli/config.toml`(与全局文件同相对路径)。从当前目录逐级向上查找,首个即停(到 home/文件系统根为止),让仓库自带数据源--类似 MCP 的 `.mcp.json`。项目级配置**覆盖式合并**到全局之上(同名 datasource 整体替换,不同名取并集;`default`/`default_limit` 覆盖)。
+
+**信任机制(安全)**:项目级配置在信任其项目根之前**不会加载**:
+
+```bash
+mysql-cli config trust        # 在项目目录下执行;写入 ~/.config/mysql-cli/trusted
+```
+
+未信任的项目级配置被**静默跳过**(exit 0,回退全局);`${ENV}` 密码占位符**仅在已信任配置中展开**--防止恶意仓库劫持连接或套取本地环境变量密码。`MYSQL_CLI_CONFIG` 环境变量可指定显式配置文件(跳过自动发现)。
+
+### `config` 子命令
+
+| 命令 | 说明 |
+| --- | --- |
+| `mysql-cli config path` `[-j]` | 显示生效的配置文件链 + 信任状态 |
+| `mysql-cli config show [name]` `[-j]` | 显示合并后的生效配置(密码脱敏:明文->`***`,`${ENV}` 原样) |
+| `mysql-cli config trust [dir]` | 信任项目根(写入 `~/.config/mysql-cli/trusted`,幂等) |
+| `mysql-cli config init [--project\|--global] [--force]` | 生成模板 `config.toml` |
+
+> 提示:查询连到错误的库时,先 `mysql-cli config path` 查信任状态,再 `mysql-cli config show` 查合并后配置(密码已脱敏)。
 
 ## 命令
 

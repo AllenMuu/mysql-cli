@@ -188,9 +188,30 @@ database = "main"
 ssl_mode = "REQUIRED"
 ```
 
-Resolution priority: **CLI flag > env > file > default**. Passwords support `${ENV}`
-placeholders. All `MYSQL_*` environment variables from the original MCP are also
-supported, so migration is zero-config.
+Resolution priority: **`--config` flag > `MYSQL_CLI_CONFIG` env > project-level (trusted) > global > `MYSQL_*` field overrides > default**. Passwords support `${ENV}` placeholders (expanded only in trusted configs). All `MYSQL_*` environment variables from the original MCP are also supported, so migration is zero-config.
+
+### Project-level config
+
+mysql-cli also reads a **project-level** config at `<project-root>/.config/mysql-cli/config.toml` (same relative path as the global file). It walks up from the current directory and stops at the first match (home/filesystem root), so a repository can carry its own datasource - like MCP's `.mcp.json`. The project-level config is **merged over** the global one (override semantics: same-name datasource replaced wholesale, distinct names unioned; `default`/`default_limit` override).
+
+**Trust mechanism (security):** a project-level config is **not loaded** until you trust its project root:
+
+```bash
+mysql-cli config trust        # run in the project dir; writes ~/.config/mysql-cli/trusted
+```
+
+Untrusted project config is **silently skipped** (exit 0, falls back to global); `${ENV}` password placeholders expand **only in trusted configs** - this prevents a malicious repo from hijacking your connection or siphoning local env-var passwords. The `MYSQL_CLI_CONFIG` env var points at an explicit config file (short-circuits discovery).
+
+### `config` subcommands
+
+| Command | Description |
+| --- | --- |
+| `mysql-cli config path` `[-j]` | Show the resolved config file chain + trust status |
+| `mysql-cli config show [name]` `[-j]` | Show the merged effective config (passwords masked: plaintext->`***`, `${ENV}` as-is) |
+| `mysql-cli config trust [dir]` | Trust a project root (writes `~/.config/mysql-cli/trusted`, idempotent) |
+| `mysql-cli config init [--project\|--global] [--force]` | Write a template `config.toml` |
+
+> Tip: if a query connects to the wrong DB, run `mysql-cli config path` to check trust status, then `mysql-cli config show` to inspect the merged config (passwords masked).
 
 ## Commands
 
