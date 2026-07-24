@@ -12,14 +12,85 @@ import (
 )
 
 // newConfigCmd wires the "config" parent command and its subcommands.
-// Task 7 adds "trust"; later tasks add path/show/init siblings.
+// Task 7 adds "trust"; Task 8 adds "path"; later tasks add show/init siblings.
 func newConfigCmd(g *Globals) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Manage config: project-level discovery, trust, and inspection",
 	}
-	cmd.AddCommand(newConfigTrustCmd(g))
+	cmd.AddCommand(newConfigTrustCmd(g), newConfigPathCmd(g))
 	return cmd
+}
+
+// explicitConfigFlag returns the --config value only when it was explicitly
+// set on the command line. Shared by path/show so they reflect the same
+// "explicit single-file overrides discovery" semantics as Load.
+func explicitConfigFlag(g *Globals) string {
+	if g.ConfigExplicit {
+		return g.ConfigPath
+	}
+	return ""
+}
+
+// newConfigPathCmd implements `config path`: prints the resolved config file
+// chain (explicit/global/project) with trust status, ordered low->high.
+// Text format: "<kind>: <path>   [trusted|untrusted, skipped|missing]".
+// JSON format: {"success":true,"data":{"entries":[{path,kind,trusted,exists}]}}.
+func newConfigPathCmd(g *Globals) *cobra.Command {
+	c := &cobra.Command{
+		Use:   "path",
+		Short: "Show the resolved config file chain and trust status",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("cannot determine home: %w", err)
+			}
+			if home == "" {
+				return errors.New("cannot determine home: $HOME is empty")
+			}
+			cwd, _ := os.Getwd()
+			entries, err := config.ResolvePathChain(config.LoadOpts{
+				ConfigFlag: explicitConfigFlag(g),
+				EnvConfig:  os.Getenv("MYSQL_CLI_CONFIG"),
+				Cwd:        cwd,
+				Home:       home,
+				IsTrusted:  func(root string) bool { return config.IsTrusted(home, root) },
+			})
+			if err != nil {
+				return err
+			}
+			asJSON, _ := cmd.Flags().GetBool("json")
+			if asJSON {
+				type entry struct {
+					Path    string `json:"path"`
+					Kind    string `json:"kind"`
+					Trusted bool   `json:"trusted"`
+					Exists  bool   `json:"exists"`
+				}
+				out := make([]entry, 0, len(entries))
+				for _, e := range entries {
+					out = append(out, entry{e.Path, e.Kind, e.Trusted, e.Exists})
+				}
+				b, _ := json.MarshalIndent(map[string]any{"success": true, "data": map[string]any{"entries": out}}, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(b))
+			} else {
+				for _, e := range entries {
+					status := "trusted"
+					if e.Kind == "project" && !e.Trusted {
+						status = "untrusted, skipped"
+					}
+					if !e.Exists {
+						status = "missing"
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "%s: %s   [%s]\n", e.Kind, e.Path, status)
+				}
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolP("json", "j", false, "emit JSON")
+	return c
 }
 
 // newConfigTrustCmd implements `config trust [dir]`.
