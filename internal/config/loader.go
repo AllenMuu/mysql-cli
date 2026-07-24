@@ -1,0 +1,28 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+)
+
+// relConfigPath is the shared relative path for both global and project configs.
+const relConfigPath = ".config/mysql-cli/config.toml"
+
+// DiscoverProject walks up from start looking for .config/mysql-cli/config.toml.
+// Returns (projectRoot, configPath, found). projectRoot strips the relConfigPath
+// suffix (it is the dir containing .config/, NOT .config/mysql-cli/ itself).
+// Stops when reaching home or the filesystem root.
+func DiscoverProject(start, home string) (root, configPath string, found bool) {
+	dir := start
+	for {
+		candidate := filepath.Join(dir, relConfigPath)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return dir, candidate, true
+		}
+		// stop at home boundary (do not search home itself as a "project")
+		if dir == home || dir == filepath.Dir(dir) {
+			return "", "", false
+		}
+		dir = filepath.Dir(dir)
+	}
+}
