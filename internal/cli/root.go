@@ -30,24 +30,24 @@ const (
 
 // Globals carries parsed global flags shared by all subcommands.
 type Globals struct {
-	Datasource   string
-	Format       string
-	Write        bool
-	DDL          bool
-	Yes          bool
-	Limit        int
-	NoLimit      bool
-	DefaultLimit int
-	Timeout      string
-	ConfigPath   string
+	Datasource     string
+	Format         string
+	Write          bool
+	DDL            bool
+	Yes            bool
+	Limit          int
+	NoLimit        bool
+	DefaultLimit   int
+	Timeout        string
+	ConfigPath     string
 	ConfigExplicit bool // true when --config was explicitly set on the command line
-	Host         string
-	Port         int
-	User         string
-	Password     string
-	Database     string
-	out          io.Writer
-	eout         io.Writer
+	Host           string
+	Port           int
+	User           string
+	Password       string
+	Database       string
+	out            io.Writer
+	eout           io.Writer
 }
 
 // Run parses args and executes; returns the process exit code.

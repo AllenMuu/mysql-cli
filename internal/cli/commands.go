@@ -79,9 +79,10 @@ func (g *Globals) defaultCap() int {
 }
 
 // resolveCap decides (limit, probe) for a read query:
-//   --limit explicit -> (g.Limit, false)   exact N, no probe
-//   --no-limit       -> (0, false)          no cap
-//   otherwise        -> (defaultCap, true)  default cap with cap+1 probe
+//
+//	--limit explicit -> (g.Limit, false)   exact N, no probe
+//	--no-limit       -> (0, false)          no cap
+//	otherwise        -> (defaultCap, true)  default cap with cap+1 probe
 func (g *Globals) resolveCap(cmd *cobra.Command) (int, bool) {
 	if cmd.Flags().Changed("limit") {
 		return g.Limit, false

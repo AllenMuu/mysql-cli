@@ -250,8 +250,8 @@ func TestIsTrusted_SymlinkNormalized(t *testing.T) {
 	os.MkdirAll(real, 0o755)
 	link := filepath.Join(home, "link")
 	os.Symlink(real, link)
-	assert.NoError(t, AddTrust(home, link))     // add via symlink path
-	assert.True(t, IsTrusted(home, real))        // resolves to real -> trusted
+	assert.NoError(t, AddTrust(home, link)) // add via symlink path
+	assert.True(t, IsTrusted(home, real))   // resolves to real -> trusted
 }
 
 func TestReadTrusted_NoFileReturnsEmpty(t *testing.T) {
