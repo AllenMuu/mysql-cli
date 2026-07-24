@@ -31,12 +31,14 @@ func TestConfigTrust_DefaultCwd(t *testing.T) {
 	os.Chdir(sub)
 	code := Run([]string{"config", "trust"})
 	assert.Equal(t, ExitOK, code)
-	// trust file now contains projRoot. projRoot lives under t.TempDir() so
-	// filepath.EvalSymlinks may resolve /var/... to /private/var/... on macOS;
-	// normalize via EvalSymlinks so the substring check is stable.
+	// Exact equality on the trimmed trust-file content: a BROKEN DiscoverProject
+	// (found=false -> fallback root=dir=projRoot/sub) would record projRoot/sub,
+	// and projRoot is a SUBSTRING of projRoot/sub (Contains would still pass).
+	// EvalSymlinks normalizes macOS /var -> /private/var so the assertion is stable.
+	b, err := os.ReadFile(filepath.Join(home, ".config", "mysql-cli", "trusted"))
+	assert.NoError(t, err)
 	want, _ := filepath.EvalSymlinks(projRoot)
-	b, _ := os.ReadFile(filepath.Join(home, ".config", "mysql-cli", "trusted"))
-	assert.Contains(t, string(b), want)
+	assert.Equal(t, want, strings.TrimSpace(string(b)))
 }
 
 func TestConfigTrust_Idempotent(t *testing.T) {
@@ -56,9 +58,13 @@ func TestConfigTrust_Idempotent(t *testing.T) {
 	os.Chdir(sub)
 	assert.Equal(t, ExitOK, Run([]string{"config", "trust"}))
 	assert.Equal(t, ExitOK, Run([]string{"config", "trust"})) // no duplicate
+	// Exact equality proves idempotency: two trust calls must still produce a
+	// single trimmed line == want. Substring Count would still pass for a
+	// broken DiscoverProject (projRoot is a substring of projRoot/sub).
+	b, err := os.ReadFile(filepath.Join(home, ".config", "mysql-cli", "trusted"))
+	assert.NoError(t, err)
 	want, _ := filepath.EvalSymlinks(projRoot)
-	b, _ := os.ReadFile(filepath.Join(home, ".config", "mysql-cli", "trusted"))
-	assert.Equal(t, 1, strings.Count(string(b), want))
+	assert.Equal(t, want, strings.TrimSpace(string(b))) // single line == want => idempotent
 }
 
 func TestConfigTrust_JSON(t *testing.T) {
