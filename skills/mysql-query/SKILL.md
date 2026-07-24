@@ -1,6 +1,6 @@
 ---
 name: mysql-query
-version: 1.0.0
+version: 1.1.0
 description: >
   Run SQL with mysql-cli: SELECT 查询、DML(INSERT/UPDATE/DELETE)、DDL(CREATE/ALTER/DROP)、
   多语句原子事务。Use when user asks to run SQL, query data, insert/update/delete rows,
@@ -132,3 +132,9 @@ mysql-cli txn \
   `txn` for atomicity; never chain statements in `query`. / 多语句拆到 `txn`, `query` 内不要串语句。
 - 错误修复、退出码、输出格式见 `mysql-shared`。/ For error recovery, exit codes, output formats, see `mysql-shared`.
 - 用 `mysql-cli query --help` 查看完整 flag。/ Run `mysql-cli query --help` for full flags.
+
+### 默认 cap 与截断
+
+- SELECT 默认只返 1000 行;`meta.truncated=true` 表示被截断,需 `--no-limit` 或 `COUNT(*)` 评估全量后再决定。
+- 省 token:`--format jsonl`(紧凑)或 `--format csv`;避免 `--format table`(对 agent 极费 token)。
+- 确知要全表且可承受时才 `--no-limit`(实测 4.4 万行表裸跑 ≈900 万 token)。

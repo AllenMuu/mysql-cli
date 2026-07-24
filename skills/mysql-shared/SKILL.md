@@ -1,6 +1,6 @@
 ---
 name: mysql-shared
-version: 1.0.0
+version: 1.1.0
 description: >
   mysql-cli 共享规则:配置与数据源、全局 flag、安全模型、稳定退出码、错误自修复、输出格式。
   使用 mysql-query 或 mysql-schema 技能前 MUST 先用 Read 加载本技能。也在用户询问
@@ -9,8 +9,8 @@ metadata:
   binary: mysql-cli
   config_file: ~/.config/mysql-cli/config.toml
   default_output: json
-  output_formats: json | table | csv | tsv
-  safety_model: read-only by default; --write (DML), --write --ddl (DDL), --yes (destructive)
+  output_formats: json | table | csv | tsv | jsonl
+  safety_model: read-only by default; --write (DML), --write --ddl (DDL), --yes (destructive); SELECT 默认 cap 1000 (--no-limit 关)
   license: MIT
   replaces: designcomputer/mysql_mcp_server
 ---
@@ -129,6 +129,18 @@ non-JSON formats, errors render as `Error [<CODE>]: <message>`.
 
 用 `-f table`/`-f csv`/`-f tsv` 切换人类可读格式。非 JSON 格式下错误渲染为
 `Error [<CODE>]: <message>`。
+
+### 默认行数 cap / Default row cap
+
+SELECT 不带 LIMIT 时,mysql-cli 默认只返回前 1000 行并在 `meta.truncated=true` 标记(用 cap+1 探测,零额外查询)。
+
+- `--limit N`:显式要 N 行,精确返回,不探测截断
+- `--no-limit`:关闭默认 cap,返回全表(危险,可能撑爆 context)
+- `default_limit`(config.toml 顶层)/ `MYSQL_CLI_DEFAULT_LIMIT`(env):调默认 cap 值
+- 优先级:`--limit` > `--no-limit` > config > env > 1000
+- 见 `truncated:true` 时,要全量需 `--no-limit` 或先 `SELECT COUNT(*)` 评估
+
+`--format jsonl`:每行一个 JSON 对象(`{"col":val,...}`),NULL 为 `null`,比 json 省 token;截断信息走 stderr。
 
 ---
 
