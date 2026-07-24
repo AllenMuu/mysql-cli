@@ -15,13 +15,15 @@ const relConfigPath = ".config/mysql-cli/config.toml"
 func DiscoverProject(start, home string) (root, configPath string, found bool) {
 	dir := start
 	for {
+		// stop at home boundary FIRST (home is never a project root): project
+		// and global configs share relConfigPath, so checking home's candidate
+		// before the boundary would wrongly treat the global config as a project.
+		if dir == home || dir == filepath.Dir(dir) {
+			return "", "", false
+		}
 		candidate := filepath.Join(dir, relConfigPath)
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return dir, candidate, true
-		}
-		// stop at home boundary (do not search home itself as a "project")
-		if dir == home || dir == filepath.Dir(dir) {
-			return "", "", false
 		}
 		dir = filepath.Dir(dir)
 	}
