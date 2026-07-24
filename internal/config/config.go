@@ -47,11 +47,13 @@ type Datasource struct {
 type Config struct {
 	Datasources       map[string]Datasource `toml:"datasource"`
 	DefaultDatasource string                `toml:"default"`
+	DefaultLimit      int                   `toml:"default_limit"`
 }
 
 type fileConfig struct {
-	Default     string                    `toml:"default"`
-	Datasources map[string]fileDatasource `toml:"datasource"`
+	Default      string                    `toml:"default"`
+	DefaultLimit int                       `toml:"default_limit"`
+	Datasources  map[string]fileDatasource `toml:"datasource"`
 }
 
 type fileDatasource struct {
@@ -89,7 +91,7 @@ func LoadFile(path string) (*Config, error) {
 	if _, err := toml.DecodeFile(path, &fc); err != nil {
 		return nil, err
 	}
-	cfg := &Config{DefaultDatasource: fc.Default, Datasources: map[string]Datasource{}}
+	cfg := &Config{DefaultDatasource: fc.Default, DefaultLimit: fc.DefaultLimit, Datasources: map[string]Datasource{}}
 	for name, fd := range fc.Datasources {
 		cfg.Datasources[name] = fileToDatasource(fd)
 	}
