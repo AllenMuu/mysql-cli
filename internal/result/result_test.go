@@ -22,3 +22,11 @@ func TestResultHoldsData(t *testing.T) {
 	assert.Equal(t, []string{"id", "name"}, r.Columns)
 	assert.Equal(t, nil, r.Rows[1][0])
 }
+
+func TestTruncatedField(t *testing.T) {
+	r := Result{Columns: []string{"id"}, Rows: [][]any{{1}}, Truncated: true}
+	assert.True(t, r.Truncated)
+
+	zero := Result{}
+	assert.False(t, zero.Truncated) // 零值为 false
+}
