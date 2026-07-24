@@ -32,10 +32,6 @@ func DiscoverProject(start, home string) (root, configPath string, found bool) {
 	}
 }
 
-// MergeConfigs overlays high onto low using覆盖式 (override) semantics:
-// same-name datasource is replaced wholesale (including SSH subtable),
-// distinct names are unioned, Default/DefaultLimit override when non-zero/non-empty.
-// high==nil returns low unchanged (nil-safe).
 // PathEntry is one resolved config file in the chain (diagnostic view).
 type PathEntry struct {
 	Path    string // absolute config file path
@@ -50,7 +46,7 @@ type LoadOpts struct {
 	EnvConfig  string                        // MYSQL_CLI_CONFIG value ("" if unset)
 	Cwd        string                        // project discovery start dir
 	Home       string                        // home dir: global config + trust store
-	IsTrusted  func(projectRoot string) bool // injectable; nil -> always false (Phase 1)
+	IsTrusted  func(projectRoot string) bool // injectable; nil -> use the real trust store at Home
 }
 
 // globalConfigPath returns <home>/.config/mysql-cli/config.toml.
@@ -116,6 +112,10 @@ func Load(opts LoadOpts) (*Config, []PathEntry, error) {
 	return merged, entries, nil
 }
 
+// MergeConfigs overlays high onto low using 覆盖式 (override) semantics:
+// same-name datasource is replaced wholesale (including SSH subtable),
+// distinct names are unioned, Default/DefaultLimit override when non-zero/non-empty.
+// high==nil returns low unchanged (nil-safe).
 func MergeConfigs(low, high *Config) *Config {
 	if high == nil {
 		return low
