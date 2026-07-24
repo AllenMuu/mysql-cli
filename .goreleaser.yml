@@ -1,0 +1,45 @@
+version: 2
+
+project_name: mysql-cli
+
+# Output to a separate dir so `--clean` never clobbers the committed
+# dist/npm/ package source.
+dist: .goreleaser-dist
+
+builds:
+  - id: mysql-cli
+    main: ./cmd/mysql-cli
+    binary: mysql-cli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    name_template: mysql-cli_{{.Os}}_{{.Arch}}
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE*
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  use: github
+
+release:
+  github:
+    owner: AllenMuu
+    name: mysql-cli

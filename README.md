@@ -48,13 +48,22 @@ binary with **JSON by default** and **stable exit codes**, so any agent
 
 #### Install
 
-**Option 1 - `go install` (recommended):**
+**Option 1 - `npx` (recommended, no Go toolchain needed):**
+
+```bash
+npx @allenmuu/mysql-cli install      # installs the prebuilt binary to ~/.local/bin
+mysql-cli init                       # installs agent skills into detected agents
+```
+
+The `npx` command downloads the prebuilt binary for your platform from GitHub Releases. Set `MYSQL_CLI_MIRROR` to use a download mirror. Then run `mysql-cli init` to install skills.
+
+**Option 2 - `go install`:**
 
 ```bash
 go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest
 ```
 
-**Option 2 - build from source:**
+**Option 3 - build from source:**
 
 ```bash
 git clone https://github.com/AllenMuu/mysql-cli.git
