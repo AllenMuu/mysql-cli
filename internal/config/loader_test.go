@@ -283,3 +283,19 @@ host = "ph"
 	assert.NoError(t, err)
 	assert.Equal(t, "ph", cfg2.Datasources["p"].Host)
 }
+
+func TestMasked_PlaintextHidden(t *testing.T) {
+	out := Masked(Datasource{Host: "h", Password: "secret"})
+	assert.Equal(t, "***", out.Password)
+	assert.Equal(t, "h", out.Host) // other fields preserved
+}
+
+func TestMasked_EnvPlaceholderKept(t *testing.T) {
+	out := Masked(Datasource{Password: "${MYSQL_PASSWORD}"})
+	assert.Equal(t, "${MYSQL_PASSWORD}", out.Password) // not masked
+}
+
+func TestMasked_EmptyStaysEmpty(t *testing.T) {
+	out := Masked(Datasource{Password: ""})
+	assert.Equal(t, "", out.Password)
+}

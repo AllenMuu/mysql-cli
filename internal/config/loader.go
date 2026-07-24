@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -218,4 +219,17 @@ func AddTrust(home, projectRoot string) error {
 		return err
 	}
 	return os.WriteFile(tf, []byte(b.String()), 0o600)
+}
+
+// placeholderMaskRe matches ${ENV} password placeholders (reuse shape from config.go).
+var placeholderMaskRe = regexp.MustCompile(`^\$\{[A-Z_][A-Z0-9_]*\}$`)
+
+// Masked returns a copy of ds with a plaintext password replaced by "***".
+// "${ENV}" placeholders (and empty) are left unchanged.
+func Masked(ds Datasource) Datasource {
+	out := ds // value copy
+	if ds.Password != "" && !placeholderMaskRe.MatchString(ds.Password) {
+		out.Password = "***"
+	}
+	return out
 }

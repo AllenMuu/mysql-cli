@@ -210,3 +210,167 @@ func TestConfigPath_UntrustedProjectSkipped(t *testing.T) {
 	assert.Contains(t, string(out), "[untrusted, skipped]")
 	assert.Contains(t, string(out), "global:")
 }
+
+// TestConfigShow_MasksPassword verifies the security-critical masking
+// behavior of `config show` (plaintext -> ***, ${ENV} placeholder preserved
+// as-is). It strengthens the brief's test (which only asserted ExitOK) by
+// capturing stdout and asserting the actual masked content - so a regression
+// that leaks a plaintext password, drops a placeholder, or fails to mask would
+// fail this test.
+//
+// Setup: a GLOBAL config (under home, always trusted) with two datasources -
+//   - "plain" with password = "supersecret" (must be masked to "***")
+//   - "env"   with password = "${MYSQL_PW}" (must be printed AS-IS)
+//
+// The test runs `config show` (text mode) AND `config show -j` (JSON mode),
+// asserting for each: contains "***", contains "${MYSQL_PW}", does NOT contain
+// "supersecret". cwd is restored via t.Cleanup; os.Stdout capture registers
+// t.Cleanup BEFORE mutating os.Stdout (panic-safe per existing tests).
+func TestConfigShow_MasksPassword(t *testing.T) {
+	origCwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(origCwd) })
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Global config under home: always loaded (kind=global, Trusted=true).
+	cfgDir := filepath.Join(home, ".config", "mysql-cli")
+	assert.NoError(t, os.MkdirAll(cfgDir, 0o755))
+	assert.NoError(t, os.WriteFile(
+		filepath.Join(cfgDir, "config.toml"),
+		[]byte(`default = "plain"
+default_limit = 1000
+
+[datasource.plain]
+host = "h1"
+user = "u1"
+password = "supersecret"
+database = "db1"
+
+[datasource.env]
+host = "h2"
+user = "u2"
+password = "${MYSQL_PW}"
+database = "db2"
+`), 0o600))
+	// chdir into home so project discovery finds no project (only global loads).
+	os.Chdir(home)
+
+	// Capture os.Stdout (config show writes via cmd.OutOrStdout() -> os.Stdout).
+	// Pre-register t.Cleanup BEFORE mutating os.Stdout so a panic between the
+	// assignment and a later Cleanup registration cannot leak the pipe-writer.
+	capture := func(args []string) (int, string) {
+		orig := os.Stdout
+		r, w, _ := os.Pipe()
+		t.Cleanup(func() { os.Stdout = orig; r.Close() })
+		os.Stdout = w
+		code := Run(args)
+		// restore + drain BEFORE returning so subsequent captures see a clean state
+		os.Stdout = orig
+		w.Close()
+		out, _ := io.ReadAll(r)
+		// r.Close is deferred to t.Cleanup (already registered) - but to be tidy
+		// we already returned; the registered Cleanup will close r.
+		return code, string(out)
+	}
+
+	// Text mode: password MUST be masked, placeholder printed as-is, plaintext
+	// MUST NOT leak into stdout.
+	code, out := capture([]string{"config", "show"})
+	assert.Equal(t, ExitOK, code)
+	assert.Contains(t, out, "***", "plaintext password should be masked to ***")
+	assert.Contains(t, out, "${MYSQL_PW}", "${ENV} placeholder should be printed as-is")
+	assert.NotContains(t, out, "supersecret", "plaintext password MUST NOT leak to stdout")
+
+	// JSON mode: same masking guarantees. Belt-and-suspenders: parse the
+	// envelope and verify the password field values are exactly *** and ${MYSQL_PW}.
+	code, out = capture([]string{"config", "show", "-j"})
+	assert.Equal(t, ExitOK, code)
+	assert.Contains(t, out, "***")
+	assert.Contains(t, out, "${MYSQL_PW}")
+	assert.NotContains(t, out, "supersecret")
+	var env struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Default      string `json:"default"`
+			DefaultLimit int    `json:"default_limit"`
+			Datasources  map[string]struct {
+				Password string `json:"password"`
+				Host     string `json:"host"`
+			} `json:"datasources"`
+		} `json:"data"`
+	}
+	assert.NoError(t, json.Unmarshal([]byte(out), &env))
+	assert.True(t, env.Success)
+	assert.Equal(t, "plain", env.Data.Default)
+	assert.Equal(t, 1000, env.Data.DefaultLimit)
+	if assert.Contains(t, env.Data.Datasources, "plain") {
+		assert.Equal(t, "***", env.Data.Datasources["plain"].Password)
+		assert.Equal(t, "h1", env.Data.Datasources["plain"].Host)
+	}
+	if assert.Contains(t, env.Data.Datasources, "env") {
+		assert.Equal(t, "${MYSQL_PW}", env.Data.Datasources["env"].Password)
+		assert.Equal(t, "h2", env.Data.Datasources["env"].Host)
+	}
+}
+
+// TestConfigShow_SingleDatasource verifies `config show <name>` filters to one
+// datasource and still masks. Strengthens the brief's test (which only used -j
+// and asserted ExitOK) by capturing stdout and asserting both the masking and
+// the filter (only the requested datasource is shown).
+func TestConfigShow_SingleDatasource(t *testing.T) {
+	origCwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(origCwd) })
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, ".config", "mysql-cli")
+	assert.NoError(t, os.MkdirAll(cfgDir, 0o755))
+	assert.NoError(t, os.WriteFile(
+		filepath.Join(cfgDir, "config.toml"),
+		[]byte(`default = "a"
+[datasource.a]
+host = "ha"
+password = "pw-a"
+[datasource.b]
+host = "hb"
+password = "pw-b"
+`), 0o600))
+	os.Chdir(home)
+
+	orig := os.Stdout
+	r, w, _ := os.Pipe()
+	t.Cleanup(func() { os.Stdout = orig; r.Close() })
+	os.Stdout = w
+	code := Run([]string{"config", "show", "a"})
+	w.Close()
+	os.Stdout = orig
+	out, _ := io.ReadAll(r)
+
+	assert.Equal(t, ExitOK, code)
+	s := string(out)
+	assert.Contains(t, s, "***")
+	assert.NotContains(t, s, "pw-a")
+	assert.NotContains(t, s, "pw-b")
+	assert.NotContains(t, s, "datasource.b:")
+	assert.Contains(t, s, "datasource.a:")
+}
+
+// TestConfigShow_UnknownDatasource verifies the error path for an unknown name.
+func TestConfigShow_UnknownDatasource(t *testing.T) {
+	origCwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(origCwd) })
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, ".config", "mysql-cli")
+	assert.NoError(t, os.MkdirAll(cfgDir, 0o755))
+	assert.NoError(t, os.WriteFile(
+		filepath.Join(cfgDir, "config.toml"),
+		[]byte(`default = "a"
+[datasource.a]
+host = "ha"
+`), 0o600))
+	os.Chdir(home)
+
+	assert.NotEqual(t, ExitOK, Run([]string{"config", "show", "nope"}))
+}
