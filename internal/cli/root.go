@@ -66,6 +66,7 @@ func newRootCmd(g *Globals) *cobra.Command {
 		Short:         "MySQL CLI for AI agents",
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		Version:       version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if g.Format != "json" && g.Format != "table" && g.Format != "csv" && g.Format != "tsv" {
 				return fmt.Errorf("invalid format %q (want json|table|csv|tsv)", g.Format)
@@ -104,6 +105,7 @@ func newRootCmd(g *Globals) *cobra.Command {
 		newAnalyzeCmd(g),
 		newSkillCmd(),
 		newInitCmd(),
+		newVersionCmd(),
 	)
 	// No subcommand -> interactive REPL (human debug; not the agent path).
 	root.RunE = func(cmd *cobra.Command, args []string) error {

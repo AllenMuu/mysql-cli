@@ -10,6 +10,8 @@ builds:
   - id: mysql-cli
     main: ./cmd/mysql-cli
     binary: mysql-cli
+    ldflags:
+      - -X github.com/AllenMuu/mysql-cli/internal/cli.version={{.Version}}
     env:
       - CGO_ENABLED=0
     goos:
