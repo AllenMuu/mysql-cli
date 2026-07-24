@@ -35,6 +35,27 @@ func SuccessJSON(r result.Result, meta map[string]any) string {
 	return string(b)
 }
 
+// ReadJSON renders the success envelope for a read query: omits rows_affected
+// (always 0 for SELECT) and reports truncated/limit in meta.
+func ReadJSON(r result.Result, limit int) string {
+	env := map[string]any{
+		"success": true,
+		"data": map[string]any{
+			"columns": r.Columns,
+			"rows":    r.Rows,
+		},
+		"meta": map[string]any{
+			"truncated": r.Truncated,
+			"limit":     limit,
+		},
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		return ErrorJSON("FORMAT_ERROR", "json marshal failed: "+err.Error())
+	}
+	return string(b)
+}
+
 // ErrorJSON renders the error envelope.
 func ErrorJSON(code, message string) string {
 	env := map[string]any{
@@ -57,6 +78,8 @@ func Format(r result.Result, format string) (string, error) {
 	switch strings.ToLower(format) {
 	case "json":
 		return SuccessJSON(r, nil), nil
+	case "jsonl":
+		return formatJSONL(r)
 	case "table":
 		return formatTable(r), nil
 	case "csv":
@@ -111,4 +134,23 @@ func formatTable(r result.Result) string {
 	}
 	tw.Render()
 	return buf.String()
+}
+
+func formatJSONL(r result.Result) (string, error) {
+	var buf bytes.Buffer
+	for _, row := range r.Rows {
+		obj := make(map[string]any, len(row))
+		for i, c := range row {
+			if i < len(r.Columns) {
+				obj[r.Columns[i]] = c
+			}
+		}
+		b, err := json.Marshal(obj)
+		if err != nil {
+			return "", err
+		}
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	return buf.String(), nil
 }
