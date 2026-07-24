@@ -8,23 +8,23 @@ import (
 	"strings"
 )
 
-// relConfigPath is the shared relative path for both global and project configs.
-const relConfigPath = ".config/mysql-cli/config.toml"
+// RelConfigPath is the shared relative path for both global and project configs.
+const RelConfigPath = ".config/mysql-cli/config.toml"
 
 // DiscoverProject walks up from start looking for .config/mysql-cli/config.toml.
-// Returns (projectRoot, configPath, found). projectRoot strips the relConfigPath
+// Returns (projectRoot, configPath, found). projectRoot strips the RelConfigPath
 // suffix (it is the dir containing .config/, NOT .config/mysql-cli/ itself).
 // Stops when reaching home or the filesystem root.
 func DiscoverProject(start, home string) (root, configPath string, found bool) {
 	dir := start
 	for {
 		// stop at home boundary FIRST (home is never a project root): project
-		// and global configs share relConfigPath, so checking home's candidate
+		// and global configs share RelConfigPath, so checking home's candidate
 		// before the boundary would wrongly treat the global config as a project.
 		if dir == home || dir == filepath.Dir(dir) {
 			return "", "", false
 		}
-		candidate := filepath.Join(dir, relConfigPath)
+		candidate := filepath.Join(dir, RelConfigPath)
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return dir, candidate, true
 		}
@@ -54,7 +54,7 @@ type LoadOpts struct {
 }
 
 // globalConfigPath returns <home>/.config/mysql-cli/config.toml.
-func globalConfigPath(home string) string { return filepath.Join(home, relConfigPath) }
+func globalConfigPath(home string) string { return filepath.Join(home, RelConfigPath) }
 
 // ResolvePathChain returns the diagnostic view of all discovered entries
 // (including an untrusted project entry marked Trusted=false), ordered low->high.
@@ -145,7 +145,7 @@ func MergeConfigs(low, high *Config) *Config {
 
 // TrustFilePath returns <home>/.config/mysql-cli/trusted.
 func TrustFilePath(home string) string {
-	return filepath.Join(home, relConfigPath[:len(relConfigPath)-len("config.toml")]+"trusted")
+	return filepath.Join(home, RelConfigPath[:len(RelConfigPath)-len("config.toml")]+"trusted")
 }
 
 // ReadTrusted parses the plaintext trust file (one normalized path per line).

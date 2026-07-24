@@ -49,7 +49,7 @@ func TestDiscoverProject_StopsAtHome(t *testing.T) {
 func TestDiscoverProject_HomeGlobalConfigIsNotProject(t *testing.T) {
 	home := t.TempDir()
 	// global config lives at home (shared relative path) - must NOT be treated as a project
-	makeProjectTree(t, home, relConfigPath)
+	makeProjectTree(t, home, RelConfigPath)
 	cwd := filepath.Join(home, "sub")
 	assert.NoError(t, os.MkdirAll(cwd, 0o755))
 	_, _, found := DiscoverProject(cwd, home)
@@ -147,7 +147,7 @@ host = "hb"
 
 func TestLoad_ProjectTrustedMergedOverGlobal(t *testing.T) {
 	home := t.TempDir()
-	globalPath := filepath.Join(home, relConfigPath)
+	globalPath := filepath.Join(home, RelConfigPath)
 	writeCfgAt(t, globalPath, `default = "g"
 [datasource.g]
 host = "gh"
@@ -155,7 +155,7 @@ host = "gh"
 host = "sh"
 `)
 	projRoot := filepath.Join(home, "proj")
-	projPath := filepath.Join(projRoot, relConfigPath)
+	projPath := filepath.Join(projRoot, RelConfigPath)
 	writeCfgAt(t, projPath, `default = "p"
 [datasource.p]
 host = "ph"
@@ -178,12 +178,12 @@ host = "projsh"
 
 func TestLoad_ProjectUntrustedFallsBackToGlobal(t *testing.T) {
 	home := t.TempDir()
-	globalPath := filepath.Join(home, relConfigPath)
+	globalPath := filepath.Join(home, RelConfigPath)
 	writeCfgAt(t, globalPath, `[datasource.g]
 host = "gh"
 `)
 	projRoot := filepath.Join(home, "proj")
-	writeCfgAt(t, filepath.Join(projRoot, relConfigPath), `[datasource.p]
+	writeCfgAt(t, filepath.Join(projRoot, RelConfigPath), `[datasource.p]
 host = "ph"
 `)
 	cfg, entries, err := Load(LoadOpts{
@@ -264,12 +264,12 @@ func TestReadTrusted_NoFileReturnsEmpty(t *testing.T) {
 // Default IsTrusted (nil) uses the real trust file at Home.
 func TestLoad_DefaultIsTrustedUsesTrustFile(t *testing.T) {
 	home := t.TempDir()
-	globalPath := filepath.Join(home, relConfigPath)
+	globalPath := filepath.Join(home, RelConfigPath)
 	writeCfgAt(t, globalPath, `[datasource.g]
 host = "gh"
 `)
 	projRoot := filepath.Join(home, "proj")
-	writeCfgAt(t, filepath.Join(projRoot, relConfigPath), `[datasource.p]
+	writeCfgAt(t, filepath.Join(projRoot, RelConfigPath), `[datasource.p]
 host = "ph"
 `)
 	// not trusted yet -> project skipped

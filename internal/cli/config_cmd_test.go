@@ -355,6 +355,55 @@ password = "pw-b"
 	assert.Contains(t, s, "datasource.a:")
 }
 
+// TestConfigInit_ProjectCreatesFile verifies `config init --project` writes the
+// template to <cwd>/.config/mysql-cli/config.toml. Strengthens the brief's test
+// by restoring cwd via t.Cleanup AND asserting the file content actually
+// contains "default" (not just that the file exists) - so a regression that
+// writes an empty file or writes to the wrong path fails the test.
+func TestConfigInit_ProjectCreatesFile(t *testing.T) {
+	origCwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(origCwd) })
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	projRoot := filepath.Join(home, "proj")
+	assert.NoError(t, os.MkdirAll(projRoot, 0o755))
+	assert.NoError(t, os.Chdir(projRoot))
+	assert.Equal(t, ExitOK, Run([]string{"config", "init", "--project"}))
+	path := filepath.Join(projRoot, ".config", "mysql-cli", "config.toml")
+	_, err := os.Stat(path)
+	assert.NoError(t, err, "config file should exist at %s", path)
+	b, err := os.ReadFile(path)
+	assert.NoError(t, err)
+	assert.Contains(t, string(b), "default", "template should contain 'default'")
+}
+
+// TestConfigInit_DoesNotOverwrite verifies the --force gate: without --force an
+// existing config is left EXACTLY untouched (exact-equality assertion, not
+// substring - so any byte change would fail); with --force the file is replaced
+// by the template (content no longer equals "# existing").
+func TestConfigInit_DoesNotOverwrite(t *testing.T) {
+	origCwd, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(origCwd) })
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	gp := filepath.Join(home, ".config", "mysql-cli", "config.toml")
+	assert.NoError(t, os.MkdirAll(filepath.Dir(gp), 0o755))
+	assert.NoError(t, os.WriteFile(gp, []byte("# existing"), 0o600))
+	// without --force -> non-zero exit, file EXACTLY unchanged
+	code := Run([]string{"config", "init", "--global"})
+	assert.NotEqual(t, ExitOK, code)
+	b, err := os.ReadFile(gp)
+	assert.NoError(t, err)
+	assert.Equal(t, "# existing", string(b)) // exact equality, NOT substring
+	// with --force -> overwritten, content no longer "# existing"
+	assert.Equal(t, ExitOK, Run([]string{"config", "init", "--global", "--force"}))
+	b2, err := os.ReadFile(gp)
+	assert.NoError(t, err)
+	assert.NotEqual(t, "# existing", string(b2))
+}
+
 // TestConfigShow_UnknownDatasource verifies the error path for an unknown name.
 func TestConfigShow_UnknownDatasource(t *testing.T) {
 	origCwd, _ := os.Getwd()
