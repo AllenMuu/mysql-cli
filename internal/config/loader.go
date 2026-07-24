@@ -88,6 +88,11 @@ func ResolvePathChain(opts LoadOpts) ([]PathEntry, error) {
 // Trust is enforced at merge time: an untrusted project entry is NOT loaded,
 // so the merged Config contains only trusted sources.
 func Load(opts LoadOpts) (*Config, []PathEntry, error) {
+	isTrusted := opts.IsTrusted
+	if isTrusted == nil {
+		isTrusted = func(root string) bool { return IsTrusted(opts.Home, root) }
+	}
+	opts.IsTrusted = isTrusted
 	entries, err := ResolvePathChain(opts)
 	if err != nil {
 		return nil, entries, err

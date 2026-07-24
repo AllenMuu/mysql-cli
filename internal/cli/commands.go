@@ -40,8 +40,7 @@ func (g *Globals) resolve() (config.Datasource, error) {
 		EnvConfig:  os.Getenv("MYSQL_CLI_CONFIG"),
 		Cwd:        cwd,
 		Home:       home,
-		// IsTrusted left nil in Phase 1 -> project never loaded (compat).
-		// Task 6 wires the real trust store here.
+		IsTrusted:  func(root string) bool { return config.IsTrusted(home, root) },
 	})
 	if err != nil {
 		return config.Datasource{}, err

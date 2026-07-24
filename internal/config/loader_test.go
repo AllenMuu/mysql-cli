@@ -260,3 +260,26 @@ func TestReadTrusted_NoFileReturnsEmpty(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Empty(t, list)
 }
+
+// Default IsTrusted (nil) uses the real trust file at Home.
+func TestLoad_DefaultIsTrustedUsesTrustFile(t *testing.T) {
+	home := t.TempDir()
+	globalPath := filepath.Join(home, relConfigPath)
+	writeCfgAt(t, globalPath, `[datasource.g]
+host = "gh"
+`)
+	projRoot := filepath.Join(home, "proj")
+	writeCfgAt(t, filepath.Join(projRoot, relConfigPath), `[datasource.p]
+host = "ph"
+`)
+	// not trusted yet -> project skipped
+	cfg, _, err := Load(LoadOpts{Cwd: projRoot, Home: home}) // IsTrusted nil
+	assert.NoError(t, err)
+	assert.NotContains(t, cfg.Datasources, "p")
+
+	// trust it -> project loaded
+	assert.NoError(t, AddTrust(home, projRoot))
+	cfg2, _, err := Load(LoadOpts{Cwd: projRoot, Home: home})
+	assert.NoError(t, err)
+	assert.Equal(t, "ph", cfg2.Datasources["p"].Host)
+}
