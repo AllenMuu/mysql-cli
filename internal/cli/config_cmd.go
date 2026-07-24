@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,8 +34,11 @@ func newConfigTrustCmd(g *Globals) *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := os.UserHomeDir()
-			if err != nil || home == "" {
+			if err != nil {
 				return fmt.Errorf("cannot determine home: %w", err)
+			}
+			if home == "" {
+				return errors.New("cannot determine home: $HOME is empty")
 			}
 			dir := ""
 			if len(args) == 1 {
