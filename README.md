@@ -205,8 +205,6 @@ supported, so migration is zero-config.
 | `analyze <table>` | Schema + sample in one shot |
 | `version` | Print the mysql-cli binary version |
 | `config <sub>` | Manage config (project discovery, trust, inspection) |
-| `init` | Install bundled skills into detected AI agents |
-| `skill <sub>` | Manage bundled skills (list/check/install/version) |
 | `help [command]` | Help about any command (also `--help` / `-h`) |
 | *(none)* | Enter the interactive REPL (human debugging) |
 
