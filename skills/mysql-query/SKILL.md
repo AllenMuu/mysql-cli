@@ -1,6 +1,6 @@
 ---
 name: mysql-query
-version: 1.1.0
+version: 1.1.1
 description: >
   Run SQL with mysql-cli: SELECT queries, DML (INSERT/UPDATE/DELETE), DDL
   (CREATE/ALTER/DROP), and multi-statement atomic transactions. Use when the user

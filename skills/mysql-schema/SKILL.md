@@ -1,6 +1,6 @@
 ---
 name: mysql-schema
-version: 1.0.0
+version: 1.0.1
 description: >
   Explore MySQL schema with mysql-cli: list databases/tables, table structure,
   sample/read rows, database overview, one-shot analyze. Use when the user asks
