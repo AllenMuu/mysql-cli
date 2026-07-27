@@ -102,21 +102,24 @@ go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest
 
 **第 2 步 - 安装 Agent Skills**
 
-二选一(两种方式都会安装全部三个 skill):
-
-*方式 A - 安装脚本*(支持下列所有 agent):
+通过 [vercel-labs/skills](https://github.com/vercel-labs/skills) 安装 skill(支持 70+ 种 agent):
 
 ```bash
-./scripts/install-skills.sh                              # 自动检测
-./scripts/install-skills.sh --agent all --project-dir ~/my-project
+npx skills add AllenMuu/mysql-cli
 ```
 
-*方式 B - 从二进制安装*(内嵌 skill,零外部依赖):
+会打开交互式选择:选 agent、选 scope(project `./<agent>/skills/` 或 global `~/<agent>/skills/`)、选安装方式(推荐 symlink)、确认。
+
+非交互(CI / agent):
 
 ```bash
-mysql-cli skill install                       # -> ~/.claude/skills
-mysql-cli skill install ~/my-project/.claude/skills
+npx skills add AllenMuu/mysql-cli --skill '*' -a claude-code -g -y
 ```
+
+> **务必安装全部 3 个 skill**(`mysql-shared`、`mysql-query`、`mysql-schema`)。
+> `mysql-query` 与 `mysql-schema` 顶部引用 `../mysql-shared/SKILL.md`,只装单个会导致引用断裂。
+
+**无 Node.js?** 手动把仓库 `skills/` 目录复制到 agent 的 skill 目录(如 `~/.claude/skills/`)。
 
 **第 3 步 - 配置数据源**
 
@@ -136,7 +139,6 @@ database = "app"
 **第 4 步 - 验证并执行**
 
 ```bash
-mysql-cli skill check                                 # 确认 skill 与二进制版本一致
 mysql-cli query "SELECT * FROM users LIMIT 10"        # 默认 JSON 输出
 ```
 
@@ -273,28 +275,17 @@ Skills 编码了触发条件、前置检查、命令参考、安全模型与错�
 
 ### 其他 agent
 
-`mysql-cli` 兼容**任何能跑 shell 命令并解析 JSON 的 agent**。安装脚本支持下列全部七种
-agent:Claude Code 与 Cursor 使用原生 SKILL.md / .mdc 格式;其余 agent 会把合并后的 skill
-正文(幂等地)追加到各自的指令文件。
+`mysql-cli` 兼容**任何能跑 shell 命令并解析 JSON 的 agent**。`npx skills add` 安装器(vercel-labs/skills)支持 Claude Code、Cursor、Codex 以及 70+ 种 agent;它以 symlink 方式安装每个 skill,因此更新仓库即可自动同步。
 
-| Agent | 配置格式 | 如何使用 `mysql-cli` |
+| Agent | 配置格式 | 安装 |
 | --- | --- | --- |
-| **Claude Code** | `.claude/skills/*/SKILL.md` | `./scripts/install-skills.sh --agent claude` 或 `mysql-cli skill install` |
-| **Cursor** | `.cursor/rules/*.mdc` | `./scripts/install-skills.sh --agent cursor` |
-| **Codex CLI** | `AGENTS.md` | `./scripts/install-skills.sh --agent codex` |
-| **OpenCode** | `.opencode/instructions.md` | `./scripts/install-skills.sh --agent opencode` |
-| **GitHub Copilot** | `.github/copilot-instructions.md` | `./scripts/install-skills.sh --agent copilot` |
-| **Windsurf** | `.windsurfrules` | `./scripts/install-skills.sh --agent windsurf` |
-| **Aider** | `.aider.instructions.md` | `./scripts/install-skills.sh --agent aider`(然后在 `.aider.conf.yml` 加 `read:`) |
-
-### Skill 管理命令
-
-| 命令 | 说明 |
-| --- | --- |
-| `mysql-cli skill list` | 列出二进制内嵌的 skill |
-| `mysql-cli skill version` | 打印期望的 skill 版本 |
-| `mysql-cli skill check [dir] [-j]` | 对比已装版本与内嵌版本(`ok`/`stale`/`missing`) |
-| `mysql-cli skill install [dir]` | 把内嵌 skill 安装到指定目录 |
+| **Claude Code** | `.claude/skills/*/SKILL.md` | `npx skills add AllenMuu/mysql-cli -a claude-code` |
+| **Cursor** | `.cursor/rules/*.mdc` | `npx skills add AllenMuu/mysql-cli -a cursor` |
+| **Codex CLI** | `AGENTS.md` | `npx skills add AllenMuu/mysql-cli -a codex` |
+| **OpenCode** | `.opencode/instructions.md` | `npx skills add AllenMuu/mysql-cli -a opencode` |
+| **GitHub Copilot** | `.github/copilot-instructions.md` | `npx skills add AllenMuu/mysql-cli -a github-copilot` |
+| **Windsurf** | `.windsurfrules` | `npx skills add AllenMuu/mysql-cli -a windsurf` |
+| **Aider** | `.aider.instructions.md` | `npx skills add AllenMuu/mysql-cli -a aider`(然后在 `.aider.conf.yml` 加 `read:`) |
 
 ### 安装须知
 
