@@ -52,10 +52,10 @@ binary with **JSON by default** and **stable exit codes**, so any agent
 
 ```bash
 npx @allenmuu/mysql-cli install      # installs the prebuilt binary to ~/.local/bin
-mysql-cli init                       # installs agent skills into detected agents
+npx skills add AllenMuu/mysql-cli    # installs agent skills (interactive)
 ```
 
-The `npx` command downloads the prebuilt binary for your platform from GitHub Releases. Set `MYSQL_CLI_MIRROR` to use a download mirror. Then run `mysql-cli init` to install skills.
+The `npx` command downloads the prebuilt binary for your platform from GitHub Releases. Set `MYSQL_CLI_MIRROR` to use a download mirror. Then run `npx skills add AllenMuu/mysql-cli` to install skills.
 
 **Option 2 - `go install`:**
 
@@ -115,30 +115,29 @@ go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest
 
 **Step 2 - Install Agent Skills**
 
-Choose one (all install the three skills). **Option 0 is the recommended approach**:
-
-**Option 0 - `mysql-cli init` (recommended, no repo clone needed):**
-
-```bash
-mysql-cli init                       # auto-detect installed agents, install to global
-mysql-cli init --agent all           # install for all 7 agents
-mysql-cli init --project-dir ~/my-project --no-global  # project-level only
-mysql-cli init -j                    # JSON output for agents
-```
-
-*Option A - installer script* (supports all agents below):
+mysql-cli ships skills for AI agents (Claude Code, Cursor, Codex, and 70+ more)
+via the [vercel-labs/skills](https://github.com/vercel-labs/skills) ecosystem.
 
 ```bash
-./scripts/install-skills.sh                              # auto-detect
-./scripts/install-skills.sh --agent all --project-dir ~/my-project
+npx skills add AllenMuu/mysql-cli
 ```
 
-*Option B - from the binary* (embeds skills, zero external deps):
+This opens an interactive picker: select agents, choose scope (project
+`./<agent>/skills/` or global `~/<agent>/skills/`), choose install method
+(symlink recommended), and confirm.
+
+Non-interactive (CI / agents):
 
 ```bash
-mysql-cli skill install                       # -> ~/.claude/skills
-mysql-cli skill install ~/my-project/.claude/skills
+npx skills add AllenMuu/mysql-cli --skill '*' -a claude-code -g -y
 ```
+
+> **Install all three skills** (`mysql-shared`, `mysql-query`, `mysql-schema`).
+> `mysql-query` and `mysql-schema` reference `../mysql-shared/SKILL.md`; installing
+> only one breaks the shared-rules reference.
+
+**No Node.js?** Manually copy the `skills/` directory from this repo into your
+agent's skill directory (e.g. `~/.claude/skills/`).
 
 **Step 3 - Configure a datasource**
 
@@ -158,7 +157,6 @@ database = "app"
 **Step 4 - Verify & run**
 
 ```bash
-mysql-cli skill check                                 # confirm skills match the binary
 mysql-cli query "SELECT * FROM users LIMIT 10"        # JSON by default
 ```
 
@@ -306,28 +304,19 @@ There are three skills, following the shared-skill pattern from `larksuite/cli`:
 ### Other agents
 
 `mysql-cli` works with **any agent that can run shell commands and parse
-JSON**. The installer supports all seven agents below: Claude Code and Cursor
-use the native SKILL.md / .mdc formats; the others receive the merged skill
-body appended (idempotently) to their instruction files.
+JSON**. The `npx skills add` installer (vercel-labs/skills) supports Claude
+Code, Cursor, Codex, and 70+ more agents; it symlinks each skill into the
+agent's skill directory.
 
-| Agent | Config format | How to use `mysql-cli` |
+| Agent | Config format | Install |
 | --- | --- | --- |
-| **Claude Code** | `.claude/skills/*/SKILL.md` | `./scripts/install-skills.sh --agent claude` or `mysql-cli skill install` |
-| **Cursor** | `.cursor/rules/*.mdc` | `./scripts/install-skills.sh --agent cursor` |
-| **Codex CLI** | `AGENTS.md` | `./scripts/install-skills.sh --agent codex` |
-| **OpenCode** | `.opencode/instructions.md` | `./scripts/install-skills.sh --agent opencode` |
-| **GitHub Copilot** | `.github/copilot-instructions.md` | `./scripts/install-skills.sh --agent copilot` |
-| **Windsurf** | `.windsurfrules` | `./scripts/install-skills.sh --agent windsurf` |
-| **Aider** | `.aider.instructions.md` | `./scripts/install-skills.sh --agent aider` (then add `read:` to `.aider.conf.yml`) |
-
-### Skill management commands
-
-| Command | Description |
-| --- | --- |
-| `mysql-cli skill list` | List skills bundled with this binary |
-| `mysql-cli skill version` | Print expected skill versions |
-| `mysql-cli skill check [dir] [-j]` | Compare installed vs bundled versions (`ok`/`stale`/`missing`) |
-| `mysql-cli skill install [dir]` | Install bundled skills into a directory |
+| **Claude Code** | `.claude/skills/*/SKILL.md` | `npx skills add AllenMuu/mysql-cli -a claude-code` |
+| **Cursor** | `.cursor/rules/*.mdc` | `npx skills add AllenMuu/mysql-cli -a cursor` |
+| **Codex CLI** | `AGENTS.md` | `npx skills add AllenMuu/mysql-cli -a codex` |
+| **OpenCode** | `.opencode/instructions.md` | `npx skills add AllenMuu/mysql-cli -a opencode` |
+| **GitHub Copilot** | `.github/copilot-instructions.md` | `npx skills add AllenMuu/mysql-cli -a github-copilot` |
+| **Windsurf** | `.windsurfrules` | `npx skills add AllenMuu/mysql-cli -a windsurf` |
+| **Aider** | `.aider.instructions.md` | `npx skills add AllenMuu/mysql-cli -a aider` (then add `read:` to `.aider.conf.yml`) |
 
 ### Setup notes
 

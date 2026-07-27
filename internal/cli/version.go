@@ -16,8 +16,7 @@ import (
 var version = "dev"
 
 // newVersionCmd is the top-level `version` subcommand: it prints the binary
-// version. This is distinct from `mysql-cli skill version`, which prints the
-// versions of the bundled skills.
+// version (injected at release build time via GoReleaser ldflags).
 func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",

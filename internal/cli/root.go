@@ -25,7 +25,6 @@ const (
 	ExitSQLError               = 8
 	ExitQueryTimeout           = 9
 	ExitConfigError            = 10
-	ExitInitFailed             = 11
 )
 
 // Globals carries parsed global flags shared by all subcommands.
@@ -109,9 +108,7 @@ func newRootCmd(g *Globals) *cobra.Command {
 		newReadCmd(g),
 		newExploreCmd(g),
 		newAnalyzeCmd(g),
-		newSkillCmd(),
 		newConfigCmd(g),
-		newInitCmd(),
 		newVersionCmd(),
 	)
 	// No subcommand -> interactive REPL (human debug; not the agent path).

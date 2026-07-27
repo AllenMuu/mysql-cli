@@ -1,0 +1,19 @@
+{
+  "skills": [
+    {
+      "name": "mysql-shared",
+      "description": "mysql-cli shared rules: config & datasource, global flags, output formats, error recovery, safety model, stable exit codes. Required by mysql-query and mysql-schema; install all three together.",
+      "path": "skills/mysql-shared/SKILL.md"
+    },
+    {
+      "name": "mysql-query",
+      "description": "Run SQL with mysql-cli: SELECT, DML (INSERT/UPDATE/DELETE), DDL, multi-statement transactions. Read-only by default, JSON output, stable exit codes, tiered write gates.",
+      "path": "skills/mysql-query/SKILL.md"
+    },
+    {
+      "name": "mysql-schema",
+      "description": "Explore MySQL schema with mysql-cli: tables, databases, sample, read, analyze. Read-only discovery.",
+      "path": "skills/mysql-schema/SKILL.md"
+    }
+  ]
+}
