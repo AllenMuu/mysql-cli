@@ -30,7 +30,7 @@ RUN_INTEGRATION=1 go test -tags=integration ./internal/integration/ -v
 包严格单向依赖，`result` 是无依赖底层，避免循环引用：
 
 ```
-cmd/mysql-cli/main  ->  cli（cobra 装配 + 退出码映射 + skill 子命令）
+cmd/mysql-cli/main  ->  cli（cobra 装配 + 退出码映射 + config 子命令）
                           ↓
         config ─-> conn ─-> query ─-> result
           │        │       └─-> safety（无依赖，纯逻辑）
@@ -46,7 +46,7 @@ cmd/mysql-cli/main  ->  cli（cobra 装配 + 退出码映射 + skill 子命令�
 - **`query`** - `Execute`（读，走 `QueryContext`）、`ExecuteWrite`（单条 DML/DDL，包在事务里提交）、`ExecuteTxn`（多条原子事务）。每条语句都过 safety 闸门 + 多语句检测。
 - **`schema`** - 只读探索命令（`schema/sample/tables/databases/read/explore/analyze`），对应原 MCP 的 `get_schema_info`/`get_table_sample`/`list_resources`/`read_resource`。所有标识符在拼接 SQL 前经 `safety.Validate*` 校验。
 - **`format`** - `result.Result` -> json/table/csv/tsv；JSON 严格信封 `{success,data,error:{code,message}}`。
-- **`cli`** - cobra 子命令 + 全局 flag + `mapError` 把核心 error 翻译成退出码；含 `skill` 子命令（list/check/install/version）。
+- **`cli`** - cobra 子命令 + 全局 flag + `mapError` 把核心 error 翻译成退出码；含 `config` 子命令（init/list/global/project）。
 - **`repl`** - readline 交互壳，仅人类调试用，复用 query/schema/format。
 
 ## 关键约定（改代码前必读）

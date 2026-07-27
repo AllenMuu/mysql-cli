@@ -6,7 +6,7 @@ One-line install of the [mysql-cli](https://github.com/AllenMuu/mysql-cli) Go bi
 
 ```bash
 npx @allenmuu/mysql-cli install      # installs the binary to ~/.local/bin
-mysql-cli init                       # installs agent skills (auto-detected)
+mysql-cli config init                  # initialises config (auto-detected)
 ```
 
 No Go toolchain required. The `install` command downloads the prebuilt binary for your platform from GitHub Releases.
@@ -14,8 +14,8 @@ No Go toolchain required. The `install` command downloads the prebuilt binary fo
 ## One-shot usage (no permanent install)
 
 ```bash
-npx @allenmuu/mysql-cli init         # install skills into detected agents
-npx @allenmuu/mysql-cli skill check  # check installed skill versions
+npx @allenmuu/mysql-cli config init  # initialises config (same as above)
+npx @allenmuu/mysql-cli config list  # list configured datasources
 npx @allenmuu/mysql-cli query "SELECT 1" -d mydb
 ```
 
