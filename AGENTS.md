@@ -37,7 +37,6 @@ cmd/mysql-cli/main  ->  cli（cobra 装配 + 退出码映射 + skill 子命令�
           │        └─-> schema ─-> result/safety
           └─ env/file 解析   repl（聚合 query+schema+format）
                               format ← result
-        cli（skill 子命令）─-> skillscheck ─-> bundle（根包，//go:embed skills/）
 ```
 
 - **`result`** - 共享 `Result{Columns, Rows, RowsAffected, LastInsertID}`，是 query/schema（生产者）与 format/cli（消费者）之间的中立契约。
@@ -49,8 +48,6 @@ cmd/mysql-cli/main  ->  cli（cobra 装配 + 退出码映射 + skill 子命令�
 - **`format`** - `result.Result` -> json/table/csv/tsv；JSON 严格信封 `{success,data,error:{code,message}}`。
 - **`cli`** - cobra 子命令 + 全局 flag + `mapError` 把核心 error 翻译成退出码；含 `skill` 子命令（list/check/install/version）。
 - **`repl`** - readline 交互壳，仅人类调试用，复用 query/schema/format。
-- **`bundle`**（根包，`bundle.go`）- `//go:embed skills` 把 skill 定义嵌入二进制，是 `mysql-cli skill install` 零依赖安装的单一来源（与 `scripts/install-skills.sh` 共享 `skills/` 目录）。
-- **`skillscheck`** - 对比已装 skill（如 `~/.claude/skills`）的 version frontmatter 与 bundle 内嵌版本，报 `ok/stale/missing/unknown`。仅 `mysql-cli skill check` 显式调用，**不走查询热路径**。
 
 ## 关键约定（改代码前必读）
 
@@ -76,12 +73,11 @@ cmd/mysql-cli/main  ->  cli（cobra 装配 + 退出码映射 + skill 子命令�
 
 ## Skill 体系（对接 AI agent）
 
-skill 让 agent 零配置发现并正确调用 mysql-cli，设计参照 `larksuite/cli`（调研见 `docs/research-lark-cli.md`）。
+mysql-cli 的 skill 不再自研安装,而是接入 [vercel-labs/skills](https://github.com/vercel-labs/skills) 生态。skill 是仓库侧资产,由通用 `skills` 包管理器安装到 75+ agent。
 
-- **skill 文件**：`skills/mysql-{shared,query,schema}/SKILL.md`。`mysql-shared` 承载配置/安全模型/退出码/错误自修复，被 `mysql-query`/`mysql-schema` 顶部 `MUST Read` 引用（auto-load，DRY）。新增 skill 建 `skills/mysql-<name>/SKILL.md`，参考 `skill-template/skill-template.md`。
-- **安装**（二选一）：
-  - `./scripts/install-skills.sh` -- auto 检测已安装的 agent；原生支持 claude/cursor（SKILL.md/.mdc），codex/opencode/copilot/windsurf/aider 幂等追加合并 skill 到各自指令文件；支持 `--agent <name>|all`、`--project-dir`、`--no-global`。
-  - `mysql-cli skill install [target-dir]` -- 从二进制内嵌的 bundle 安装，零外部依赖（默认 `~/.claude/skills`）。
-- **版本同步检查**：`mysql-cli skill check [target-dir] [-j]` 对比已装 skill version 与内嵌版本，状态 `ok/stale/missing/unknown`，始终 exit 0（agent 解析 JSON `status` 字段）。
-- **格式校验**：`scripts/skill-format-check.sh` 校验 SKILL.md frontmatter（name/version/description/metadata + name 匹配目录 + semver），CI `.github/workflows/skill-format-check.yml` 在 PR 时强制。改 skill 后本地跑一遍。
-- **改动 skill 后**：skill 文件是 `bundle` 的 embed 源，改完 `go build` 重新嵌入；`scripts/install-skills.sh` 与 bundle 共享同一份 `skills/`，无需同步两份。
+- **skill 文件**:`skills/mysql-{shared,query,schema}/SKILL.md`。`mysql-shared` 承载配置/安全模型/退出码/错误自修复,被 `mysql-query`/`mysql-schema` 顶部 `MUST Read` 引用(auto-load,DRY)。
+- **安装**:`npx skills add AllenMuu/mysql-cli`(交互式选 agent/scope/install method);非交互 `npx skills add AllenMuu/mysql-cli --skill '*' -a <agent> -g -y`。**务必全装 3 个 skill**,否则 `mysql-shared` 引用断裂。
+- **发现机制**:仓库根 `.well-known/agent-skills/index.json` 声明 3 skill(vercel-labs/skills 首选);不加也可走默认 `skills/*/SKILL.md` 扫描。
+- **格式校验**:`scripts/skill-format-check.sh` 校验 SKILL.md frontmatter(name/version/description/metadata + semver),CI `.github/workflows/skill-format-check.yml` PR 时强制。改 skill 后本地跑一遍。
+- **版本真相源**:skill 版本 = 仓库 `skills/*/SKILL.md` frontmatter 的 `version` 字段(不再二进制内嵌)。
+- **无 Node fallback**:手动复制仓库 `skills/` 目录到 agent skill 目录。
