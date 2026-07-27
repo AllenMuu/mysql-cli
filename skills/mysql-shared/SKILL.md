@@ -1,6 +1,6 @@
 ---
 name: mysql-shared
-version: 1.2.1
+version: 2.0.0
 description: >
   mysql-cli shared rules: config and datasources, global flags, safety model,
   stable exit codes, error self-repair, and output formats. MUST be loaded with
