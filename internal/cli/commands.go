@@ -126,8 +126,9 @@ func (g *Globals) emitResult(r result.Result, err error) {
 
 func newQueryCmd(g *Globals) *cobra.Command {
 	return &cobra.Command{
-		Use:  "query <sql>",
-		Args: cobra.ExactArgs(1),
+		Use:   "query <sql>",
+		Short: "Run a SQL statement (read by default; --write for DML)",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sqlText := args[0]
 			// Validate before connecting: multi-statement and guard checks
@@ -171,8 +172,9 @@ func newQueryCmd(g *Globals) *cobra.Command {
 
 func newTxnCmd(g *Globals) *cobra.Command {
 	return &cobra.Command{
-		Use:  "txn <sql1> [sql2...]",
-		Args: cobra.MinimumNArgs(1),
+		Use:   "txn <sql1> [sql2...]",
+		Short: "Run multiple statements in one atomic transaction",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pool, err := g.openPool()
 			if err != nil {
@@ -188,8 +190,9 @@ func newTxnCmd(g *Globals) *cobra.Command {
 
 func newSchemaCmd(g *Globals) *cobra.Command {
 	return &cobra.Command{
-		Use:  "schema [table]",
-		Args: cobra.MaximumNArgs(1),
+		Use:   "schema [table]",
+		Short: "Show table structure, or whole database if no table given",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			table := ""
 			if len(args) == 1 {
@@ -204,8 +207,9 @@ func newSchemaCmd(g *Globals) *cobra.Command {
 
 func newSampleCmd(g *Globals) *cobra.Command {
 	c := &cobra.Command{
-		Use:  "sample <table>",
-		Args: cobra.ExactArgs(1),
+		Use:   "sample <table>",
+		Short: "Sample rows from a table (-n, max 20)",
+		Args:  cobra.ExactArgs(1),
 	}
 	c.Flags().IntP("n", "n", 5, "sample row count (max 20)")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
@@ -219,8 +223,9 @@ func newSampleCmd(g *Globals) *cobra.Command {
 
 func newTablesCmd(g *Globals) *cobra.Command {
 	return &cobra.Command{
-		Use:  "tables [db]",
-		Args: cobra.MaximumNArgs(1),
+		Use:   "tables [db]",
+		Short: "List tables in a database",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			db := ""
 			if len(args) == 1 {
@@ -235,8 +240,9 @@ func newTablesCmd(g *Globals) *cobra.Command {
 
 func newDatabasesCmd(g *Globals) *cobra.Command {
 	return &cobra.Command{
-		Use:  "databases",
-		Args: cobra.NoArgs,
+		Use:   "databases",
+		Short: "List databases",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return g.runSchema(func(p *conn.Pool) (result.Result, error) {
 				return schema.Databases(context.Background(), p)
@@ -247,8 +253,9 @@ func newDatabasesCmd(g *Globals) *cobra.Command {
 
 func newReadCmd(g *Globals) *cobra.Command {
 	return &cobra.Command{
-		Use:  "read <table>",
-		Args: cobra.ExactArgs(1),
+		Use:   "read <table>",
+		Short: "First 100 rows of a table",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return g.runSchema(func(p *conn.Pool) (result.Result, error) {
 				return schema.Read(context.Background(), p, args[0])
@@ -259,8 +266,9 @@ func newReadCmd(g *Globals) *cobra.Command {
 
 func newExploreCmd(g *Globals) *cobra.Command {
 	return &cobra.Command{
-		Use:  "explore",
-		Args: cobra.NoArgs,
+		Use:   "explore",
+		Short: "Database and table overview",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return g.runSchema(func(p *conn.Pool) (result.Result, error) {
 				return schema.Explore(context.Background(), p)
@@ -271,8 +279,9 @@ func newExploreCmd(g *Globals) *cobra.Command {
 
 func newAnalyzeCmd(g *Globals) *cobra.Command {
 	return &cobra.Command{
-		Use:  "analyze <table>",
-		Args: cobra.ExactArgs(1),
+		Use:   "analyze <table>",
+		Short: "Schema + sample in one shot",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return g.runSchema(func(p *conn.Pool) (result.Result, error) {
 				return schema.Analyze(context.Background(), p, args[0])

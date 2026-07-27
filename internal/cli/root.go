@@ -128,5 +128,6 @@ func newRootCmd(g *Globals) *cobra.Command {
 		}
 		return fmt.Errorf("repl exited with code %d", code)
 	}
+	applyHelpGrouping(root)
 	return root
 }
