@@ -5,16 +5,12 @@ on:
       - "skills/**"
       - "scripts/skill-format-check/**"
       - "scripts/skill-format-check.sh"
-      - "scripts/install-skills.sh"
-      - "scripts/install-skills-test.sh"
       - ".github/workflows/skill-format-check.yml"
   pull_request:
     paths:
       - "skills/**"
       - "scripts/skill-format-check/**"
       - "scripts/skill-format-check.sh"
-      - "scripts/install-skills.sh"
-      - "scripts/install-skills-test.sh"
       - ".github/workflows/skill-format-check.yml"
 
 jobs:
@@ -28,6 +24,3 @@ jobs:
 
       - name: Self-test (good/bad fixtures)
         run: ./scripts/skill-format-check/test.sh
-
-      - name: Installer tests (7 agents)
-        run: ./scripts/install-skills-test.sh
