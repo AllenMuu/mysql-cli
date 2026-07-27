@@ -2,23 +2,25 @@
 name: mysql-shared
 version: 1.2.0
 description: >
-  mysql-cli 共享规则:配置与数据源、全局 flag、安全模型、稳定退出码、错误自修复、输出格式。
-  使用 mysql-query 或 mysql-schema 技能前 MUST 先用 Read 加载本技能。也在用户询问
-  mysql-cli 配置、连接失败、只读/权限错误、退出码含义、输出格式时直接使用。
+  mysql-cli shared rules: config and datasources, global flags, safety model,
+  stable exit codes, error self-repair, and output formats. MUST be loaded with
+  Read before using the mysql-query or mysql-schema skill. Also used directly when
+  the user asks about mysql-cli config, connection failures, read-only/permission
+  errors, exit code meanings, or output formats.
 metadata:
   binary: mysql-cli
   config_file: ~/.config/mysql-cli/config.toml
   default_output: json
   output_formats: json | table | csv | tsv | jsonl
-  safety_model: read-only by default; --write (DML), --write --ddl (DDL), --yes (destructive); SELECT 默认 cap 1000 (--no-limit 关)
+  safety_model: read-only by default; --write (DML), --write --ddl (DDL), --yes (destructive); SELECT default cap 1000 (--no-limit to disable)
   license: MIT
   replaces: designcomputer/mysql_mcp_server
 ---
 
-# mysql-cli 共享规则 / mysql-cli Shared Rules
+# mysql-cli Shared Rules
 
-> **CRITICAL**: 本技能被 `mysql-query` 与 `mysql-schema` 引用。使用任一技能前,先用 Read
-> 工具加载本文件。/ Referenced by `mysql-query` and `mysql-schema`; read this before either.
+> **CRITICAL**: This skill is referenced by `mysql-query` and `mysql-schema`.
+> Read this file with the Read tool before using either.
 
 `mysql-cli` is a Go CLI that lets any shell-capable AI agent query MySQL without
 an MCP runtime. It is a drop-in replacement for `designcomputer/mysql_mcp_server`,
@@ -26,25 +28,18 @@ re-exposing all read/write capabilities as plain subcommands with **JSON by
 default** and **stable exit codes**. Agents are the primary caller; the REPL is
 only for human debugging.
 
-`mysql-cli` 是一个 Go CLI,让任何能跑 shell 的 AI agent 无需 MCP runtime 即可查询 MySQL。
-它替代 `designcomputer/mysql_mcp_server`,把全部读写能力下沉为命令行子命令,
-**默认 JSON 输出**、**稳定退出码**。agent 是首要调用方,REPL 仅供人类调试。
-
-> Convention / 约定: assume the `mysql-cli` binary is on `PATH`. If not, install
-> with `go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest` or point
-> commands at the built binary. / 假设 `mysql-cli` 已在 `PATH` 中;否则用
-> `go install` 安装或指向编译产物。
+> Convention: assume the `mysql-cli` binary is on `PATH`. If not, install with
+> `go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest` or point
+> commands at the built binary.
 
 ---
 
-## Before Running / 前置检查
+## Before Running
 
 Run these checks before the first command in a session. They are cheap and
 prevent the most common failures (missing config, unreachable datasource).
 
-首次调用前先做以下轻量检查,可避免最常见的失败(缺配置、数据源不可达)。
-
-### 1. Config file exists / 配置文件存在
+### 1. Config file exists
 
 ```bash
 ls ~/.config/mysql-cli/config.toml
@@ -54,10 +49,7 @@ If missing, `mysql-cli` still works via `MYSQL_*` env vars or `--host/--port/...
 overrides, but a config file is the normal path. Resolution priority is
 **CLI flag > env > project-level (trusted) > global > default** (see Project-level Config below). Passwords support `${ENV}` placeholders (expanded only in trusted configs).
 
-若不存在,仍可通过 `MYSQL_*` 环境变量或 `--host/--port/...` 覆盖运行,
-但配置文件是常规路径。解析优先级:**CLI flag > env > 项目级(已信任) > 全局 > default**(见下文「项目级配置」)。密码支持 `${ENV}` 占位符(仅在已信任配置中展开)。
-
-### 2. Datasource reachable / 数据源可达
+### 2. Datasource reachable
 
 A lightweight probe via the read-only `databases` command (no table scan):
 
@@ -65,189 +57,183 @@ A lightweight probe via the read-only `databases` command (no table scan):
 mysql-cli databases -f json
 ```
 
-- Exit `0` + `{"success":true,...}` -> reachable, proceed. / 退出 `0` 且 `success:true` -> 可达,继续。
-- Exit `2` (CONN_FAILED) -> check host/port/credentials/SSH tunnel. / 退出 `2` -> 检查 host/port/凭据/SSH 隧道。
-- Exit `10` (CONFIG_ERROR) -> check `config.toml` syntax or datasource name. / 退出 `10` -> 检查 `config.toml` 语法或数据源名。
+- Exit `0` + `{"success":true,...}` -> reachable, proceed.
+- Exit `2` (CONN_FAILED) -> check host/port/credentials/SSH tunnel.
+- Exit `10` (CONFIG_ERROR) -> check `config.toml` syntax or datasource name.
 
-### 3. (Optional) Pick a datasource / 选择数据源
+### 3. (Optional) Pick a datasource
 
 If the config defines multiple `[datasource.<name>]` profiles, select one with
 `-d <name>`. Otherwise the `default` entry is used.
 
-若配置了多个 `[datasource.<name>]`,用 `-d <name>` 指定;否则用 `default` 条目。
-
 ---
 
-## Project-level Config / 项目级配置
+## Project-level Config
 
-mysql-cli 支持项目级配置,与全局同构、覆盖式合并(类似 MCP 的 `.mcp.json`)。
+mysql-cli supports project-level config, structurally identical to the global
+config and merged override-style (similar to MCP's `.mcp.json`).
 
-- **项目级 config 位置**:`<project-root>/.config/mysql-cli/config.toml`。从 cwd 逐级向上查找,首个即停(到 home/fs root 为止)。与全局 `~/.config/mysql-cli/config.toml` 共享相对路径 `.config/mysql-cli/config.toml`,仅根不同。
-- **信任机制(安全)**:项目级 config 默认**不加载**。首次需在项目目录下执行 `mysql-cli config trust`,把项目根写入信任清单 `~/.config/mysql-cli/trusted`。未信任时**静默回退全局**(exit 0,不报错);`${ENV}` 密码占位符仅在已信任的项目级 config 中展开--防止恶意仓库套取本地环境变量或劫持连接。
-- **优先级链**:`--config` flag > `MYSQL_CLI_CONFIG` env > 项目级(已信任) > 全局 > `MYSQL_*` 字段级覆盖 > default。`--config` 或 `MYSQL_CLI_CONFIG` 指定后只读该文件,跳过自动发现。
-- **覆盖式合并**:同名 datasource 整体替换(项目级胜,含 SSH 子表),不同名取并集;`default`/`default_limit` 项目级覆盖全局。
+- **Project-level config location**: `<project-root>/.config/mysql-cli/config.toml`.
+  Discovered by walking up from cwd; the first match wins (stops at home/fs
+  root). Shares the relative path `.config/mysql-cli/config.toml` with the global
+  `~/.config/mysql-cli/config.toml`; only the root differs.
+- **Trust mechanism (security)**: project-level config is **not loaded** by
+  default. First run `mysql-cli config trust` inside the project directory to
+  write the project root into the trust list at `~/.config/mysql-cli/trusted`.
+  When untrusted, it **silently falls back to global** (exit 0, no error);
+  `${ENV}` password placeholders expand only in trusted project-level configs -
+  preventing malicious repos from harvesting local env vars or hijacking
+  connections.
+- **Priority chain**: `--config` flag > `MYSQL_CLI_CONFIG` env > project-level
+  (trusted) > global > `MYSQL_*` field-level overrides > default. When `--config`
+  or `MYSQL_CLI_CONFIG` is set, only that file is read and auto-discovery is
+  skipped.
+- **Override-style merge**: same-named datasources replace wholesale (project
+  wins, including SSH subtables); different names form a union; `default` and
+  `default_limit` from project override global.
 
-### config 子命令族 / config subcommands
+### config subcommands
 
-| 命令 | 作用 |
+| Command | Purpose |
 |---|---|
-| `mysql-cli config path` `[-j]` | 显示生效文件链 + 信任状态(project 标 `trusted` / `untrusted, skipped` + global) |
-| `mysql-cli config show` `[name]` `[-j]` | 显示合并后最终配置(密码脱敏:明文->`***`,`${ENV}` 原样) |
-| `mysql-cli config trust [dir]` | 信任项目根(默认检测到的项目根),写入信任清单 |
-| `mysql-cli config init [--project\|--global] [--force]` | 生成模板 config.toml |
+| `mysql-cli config path` `[-j]` | Show effective file chain + trust status (project marked `trusted` / `untrusted, skipped` + global) |
+| `mysql-cli config show` `[name]` `[-j]` | Show final merged config (passwords redacted: literal -> `***`, `${ENV}` shown as-is) |
+| `mysql-cli config trust [dir]` | Trust the project root (defaults to detected root), writing it to the trust list |
+| `mysql-cli config init [--project\|--global] [--force]` | Generate a template config.toml |
 
-> **自省提示**:查询结果或连接不符合预期时,先 `mysql-cli config path` 查信任状态,再 `mysql-cli config show` 查合并后配置(密码已脱敏)。
+> **Self-check tip**: when query results or connections don't match expectations,
+> first run `mysql-cli config path` to inspect trust status, then
+> `mysql-cli config show` to inspect the merged config (passwords redacted).
 
-## Global Flags / 全局 flag
+## Global Flags
 
 All commands share global flags: `-d/--datasource`, `-f/--format` (default
 `json`), `--write`, `--ddl`, `--yes`, `--limit`, `--timeout` (default `30s`),
 `--config`, and connection overrides `--host/--port/--user/--password/--db`.
 
-所有命令共享全局 flag:`-d/--datasource`、`-f/--format`(默认 `json`)、
-`--write`、`--ddl`、`--yes`、`--limit`、`--timeout`(默认 `30s`)、`--config`,
-以及连接覆盖 `--host/--port/--user/--password/--db`。
-
 ---
 
-## Output Formats / 输出格式
+## Output Formats
 
 Default is JSON (agent-friendly, parse with `jq`). Success and failure share one
 strict envelope.
 
-默认 JSON(agent 友好,可用 `jq` 解析)。成功与失败共用同一严格信封。
-
-**Success / 成功:**
+**Success:**
 
 ```json
 {"success":true,"data":{"columns":["id","email"],"rows":[[1,"a@x.com"]]},"rows_affected":0,"meta":{}}
 ```
 
-| Field / 字段 | Meaning / 含义 |
+| Field | Meaning |
 | --- | --- |
-| `success` | `true` on success. / 成功为 `true`。 |
-| `data.columns` | Column names. / 列名。 |
-| `data.rows` | Row values (text columns come back as strings, not base64). / 行值(文本列以字符串返回,非 base64)。 |
-| `rows_affected` | For DML/DDL writes. / DML/DDL 写入的受影响行数。 |
-| `meta` | Reserved metadata. / 预留元信息。 |
+| `success` | `true` on success. |
+| `data.columns` | Column names. |
+| `data.rows` | Row values (text columns come back as strings, not base64). |
+| `rows_affected` | For DML/DDL writes. |
+| `meta` | Reserved metadata. |
 
-**Failure / 失败:**
+**Failure:**
 
 ```json
 {"success":false,"error":{"code":"READONLY_VIOLATION","message":"UPDATE requires --write"}}
 ```
 
-| Field / 字段 | Meaning / 含义 |
+| Field | Meaning |
 | --- | --- |
-| `success` | `false` on error. / 失败为 `false`。 |
-| `error.code` | Stable machine-readable code (see Error Handling). / 稳定的机器可读码(见错误自修复)。 |
-| `error.message` | Human-readable detail. / 人类可读详情。 |
+| `success` | `false` on error. |
+| `error.code` | Stable machine-readable code (see Error Handling). |
+| `error.message` | Human-readable detail. |
 
 Switch human-readable rendering with `-f table`, `-f csv`, or `-f tsv`. In
 non-JSON formats, errors render as `Error [<CODE>]: <message>`.
 
-用 `-f table`/`-f csv`/`-f tsv` 切换人类可读格式。非 JSON 格式下错误渲染为
-`Error [<CODE>]: <message>`。
+### Default row cap
 
-### 默认行数 cap / Default row cap
+When a SELECT has no LIMIT, mysql-cli returns only the first 1000 rows by default
+and sets `meta.truncated=true` (detected via a cap+1 probe, with no extra
+query).
 
-SELECT 不带 LIMIT 时,mysql-cli 默认只返回前 1000 行并在 `meta.truncated=true` 标记(用 cap+1 探测,零额外查询)。
+- `--limit N`: explicitly request N rows; returned exactly, no truncation probe.
+- `--no-limit`: disable the default cap and return the full table (dangerous -
+  may blow up context).
+- `default_limit` (top-level config.toml) / `MYSQL_CLI_DEFAULT_LIMIT` (env):
+  tune the default cap value.
+- Priority: `--limit` > `--no-limit` > config > env > 1000.
+- When you see `truncated:true` and need the full set, use `--no-limit` or first
+  run `SELECT COUNT(*)` to assess the size.
 
-- `--limit N`:显式要 N 行,精确返回,不探测截断
-- `--no-limit`:关闭默认 cap,返回全表(危险,可能撑爆 context)
-- `default_limit`(config.toml 顶层)/ `MYSQL_CLI_DEFAULT_LIMIT`(env):调默认 cap 值
-- 优先级:`--limit` > `--no-limit` > config > env > 1000
-- 见 `truncated:true` 时,要全量需 `--no-limit` 或先 `SELECT COUNT(*)` 评估
-
-`--format jsonl`:每行一个 JSON 对象(`{"col":val,...}`),NULL 为 `null`,比 json 省 token;截断信息走 stderr。
+`--format jsonl`: one JSON object per line (`{"col":val,...}`), NULL as `null`;
+  more token-efficient than json. Truncation info goes to stderr.
 
 ---
 
-## Error Handling / 错误自修复
+## Error Handling
 
 `mysql-cli` maps every error to a stable exit code. Parse the exit code (or
 `error.code` in JSON) and apply the fix below, then retry. The read-only and
 multi-statement checks run **before** a connection is opened, so you get the
 correct code without touching the database.
 
-`mysql-cli` 把每个错误映射到稳定退出码。解析退出码(或 JSON 的 `error.code`),
-按下表修复后重试。只读与多语句检查在**连接建立前**运行,无需触库即可得到正确码。
-
-| Exit / 退出码 | Code / 码 | Meaning / 含义 | Fix / 修复 |
+| Exit | Code | Meaning | Fix |
 | ---: | --- | --- | --- |
-| `2` | `CONN_FAILED` | Cannot reach MySQL / 无法连接 | Check host/port/credentials/SSH tunnel in `config.toml`; verify with `mysql-cli databases`. Use `-d <name>` for the right datasource. / 检查 `config.toml` 中的 host/port/凭据/SSH 隧道;用 `mysql-cli databases` 验证。用 `-d <name>` 选对数据源。 |
-| `3` | `READONLY_VIOLATION` | DML without `--write` / 无 `--write` 的 DML | Re-run with `--write`. / 加 `--write` 重跑。 |
-| `4` | `DDL_REQUIRES_WRITE` | DDL missing flags / DDL 缺 flag | Re-run with `--write --ddl`. / 加 `--write --ddl` 重跑。 |
-| `5` | `DESTRUCTIVE_REQUIRES_YES` | Destructive op needs confirmation / 破坏性操作需确认 | Re-run with `--yes` (and `--write`, plus `--ddl` for DDL-class drops). / 加 `--yes`(及 `--write`;DDL 类 drop 另加 `--ddl`)。 |
-| `6` | `IDENTIFIER_INVALID` | Table/db name not in `^[a-zA-Z0-9_$]+$` / 标识符非法 | Use a valid identifier; avoid quotes/spaces. For `db.table` use the qualified form. / 改用合法标识符,去引号/空格;`db.table` 用限定形式。 |
-| `7` | `MULTI_STATEMENT` | More than one statement passed to `query` / `query` 收到多语句 | Use `mysql-cli txn "<s1>" "<s2>"` instead. / 改用 `mysql-cli txn`。 |
-| `8` | `SQL_ERROR` | SQL syntax/semantic error / SQL 语法/语义错误 | Run `mysql-cli schema <table>` to confirm columns/types, then fix the SQL. / 用 `schema <table>` 确认列/类型后修正 SQL。 |
-| `9` | `QUERY_TIMEOUT` | Exceeded `--timeout` / 超时 | Raise `--timeout 60s`, add `--limit`, or narrow the `WHERE`. / 调大 `--timeout`、加 `--limit` 或收窄 `WHERE`。 |
-| `10` | `CONFIG_ERROR` | Config parse error or unknown datasource / 配置解析错误或未知数据源 | Check `config.toml` TOML syntax, the `default` value, and datasource name spelling; point `--config` at the right file. / 检查 `config.toml` 语法、`default` 值与数据源名拼写;用 `--config` 指向正确文件。 |
+| `2` | `CONN_FAILED` | Cannot reach MySQL | Check host/port/credentials/SSH tunnel in `config.toml`; verify with `mysql-cli databases`. Use `-d <name>` for the right datasource. |
+| `3` | `READONLY_VIOLATION` | DML without `--write` | Re-run with `--write`. |
+| `4` | `DDL_REQUIRES_WRITE` | DDL missing flags | Re-run with `--write --ddl`. |
+| `5` | `DESTRUCTIVE_REQUIRES_YES` | Destructive op needs confirmation | Re-run with `--yes` (and `--write`, plus `--ddl` for DDL-class drops). |
+| `6` | `IDENTIFIER_INVALID` | Table/db name not in `^[a-zA-Z0-9_$]+$` | Use a valid identifier; avoid quotes/spaces. For `db.table` use the qualified form. |
+| `7` | `MULTI_STATEMENT` | More than one statement passed to `query` | Use `mysql-cli txn "<s1>" "<s2>"` instead. |
+| `8` | `SQL_ERROR` | SQL syntax/semantic error | Run `mysql-cli schema <table>` to confirm columns/types, then fix the SQL. |
+| `9` | `QUERY_TIMEOUT` | Exceeded `--timeout` | Raise `--timeout 60s`, add `--limit`, or narrow the `WHERE`. |
+| `10` | `CONFIG_ERROR` | Config parse error or unknown datasource | Check `config.toml` TOML syntax, the `default` value, and datasource name spelling; point `--config` at the right file. |
 
 Exit `1` is reserved for argument/flag usage errors (cobra); fix the command line.
-/ 退出 `1` 保留给参数/flag 用法错误(cobra);修正命令行即可。
 
 ---
 
-## Security Model / 安全模型
+## Security Model
 
 `mysql-cli` is **read-only by default**. Writes are gated in tiers so a missing
 flag never silently mutates data.
 
-`mysql-cli` **默认只读**。写操作分层闸门,缺 flag 时绝不静默改数据。
-
-| Operation class / 操作类别 | Required flags / 所需 flag |
+| Operation class | Required flags |
 | --- | --- |
-| `SELECT` / read exploration | none (default read-only) / 无(默认只读) |
+| `SELECT` / read exploration | none (default read-only) |
 | DML (`INSERT`/`UPDATE`/`DELETE`) | `--write` |
 | DDL (`CREATE`/`ALTER`/`DROP`/...) | `--write --ddl` |
 | Destructive (`DROP`/`TRUNCATE`, `UPDATE`/`DELETE` without `WHERE`) | `--yes` (+ `--write`, + `--ddl` for DDL-class) |
 
-> Safety flags at a glance / 安全 flag 速查:
+> Safety flags at a glance:
 > `--write` unlocks DML · `--ddl` unlocks DDL (**requires** `--write`) ·
-> `--yes` confirms destructive ops. / `--write` 放行 DML · `--ddl` 放行 DDL
-> (需配合 `--write`) · `--yes` 确认破坏性操作。
+> `--yes` confirms destructive ops.
 
-Additional guarantees / 额外保证:
+Additional guarantees:
 
-- **Identifier allowlist / 标识符白名单**: table/db names must match
-  `^[a-zA-Z0-9_$]+$`; qualified `db.table` is allowed. Prevents injection in
-  schema-exploration SQL. / 表/库名须匹配 `^[a-zA-Z0-9_$]+$`,允许 `db.table`,
-  防 schema 探索 SQL 注入。
-- **Multi-statement rejection / 多语句拒绝**: `query` accepts a single statement
-  (one trailing `;` tolerated); multiple statements must use `txn`. / `query`
-  仅接受单条语句(容忍结尾分号),多语句须用 `txn`。
-- **Pre-connection gating / 连接前闸门**: read-only and multi-statement checks
-  run before any DB connection, so the right exit code is returned without
-  touching the database. / 只读与多语句检查在连接前运行,无需触库即返回正确退出码。
-- **Config safety / 配置安全**: prefer a read-only DB user (`ro_user`) for the
-  default datasource; reserve write-capable users for explicit `-d` profiles.
-  / 默认数据源建议用只读账号(`ro_user`),写权限账号留给显式 `-d` profile。
+- **Identifier allowlist**: table/db names must match `^[a-zA-Z0-9_$]+$`;
+  qualified `db.table` is allowed. Prevents injection in schema-exploration SQL.
+- **Multi-statement rejection**: `query` accepts a single statement (one
+  trailing `;` tolerated); multiple statements must use `txn`.
+- **Pre-connection gating**: read-only and multi-statement checks run before any
+  DB connection, so the right exit code is returned without touching the
+  database.
+- **Config safety**: prefer a read-only DB user (`ro_user`) for the default
+  datasource; reserve write-capable users for explicit `-d` profiles.
 
 ---
 
-## Best Practices / 最佳实践
+## Best Practices
 
-- **Explore before you query / 先探索再查询**: run `explore`/`analyze`/`schema`
-  first to confirm column names and types; this prevents `SQL_ERROR` (exit `8`).
-  / 先 `explore`/`analyze`/`schema` 确认列名与类型,避免 `SQL_ERROR`(退出 `8`)。
-- **Bound large results / 大结果集加上限**: always add `--limit N` to `SELECT`,
-  or use `sample`/`read` which are already capped. / `SELECT` 一律加 `--limit N`,
-  或用已封顶的 `sample`/`read`。
-- **Default to JSON / 默认 JSON**: keep `-f json` (the default) so you can parse
-  with `jq`; switch to `table` only when showing data to the user.
-  / 保持 `-f json`(默认)以便 `jq` 解析;仅向用户展示时切 `table`。
-- **Validate WHERE on reads first / 先只读验证 WHERE**: before an `UPDATE`/
-  `DELETE`, run the same `WHERE` as a `SELECT COUNT(*)` to confirm scope.
-  / `UPDATE`/`DELETE` 前用相同 `WHERE` 跑 `SELECT COUNT(*)` 确认范围。
-- **Match flags to intent / flag 对齐意图**: DML -> `--write`; DDL ->
-  `--write --ddl`; destructive -> add `--yes`. Don't add `--yes` speculatively.
-  / DML 加 `--write`;DDL 加 `--write --ddl`;破坏性再加 `--yes`,勿盲目加 `--yes`。
-- **Reuse the connection model / 复用连接模型**: each invocation opens and
-  closes its own pool (and SSH tunnel). Don't try to hold connections across
-  calls; just issue separate commands. / 每次调用各自开关连接池与 SSH 隧道,
-  跨调用不要试图保持连接,直接发独立命令即可。
-- **Prefer read-only DB users / 偏好只读账号**: configure the default
-  datasource with a read-only user; force writes to go through an explicit
-  `-d` profile. / 默认数据源配只读账号,写操作走显式 `-d` profile。
+- **Explore before you query**: run `explore`/`analyze`/`schema` first to
+  confirm column names and types; this prevents `SQL_ERROR` (exit `8`).
+- **Bound large results**: always add `--limit N` to `SELECT`, or use
+  `sample`/`read` which are already capped.
+- **Default to JSON**: keep `-f json` (the default) so you can parse with `jq`;
+  switch to `table` only when showing data to the user.
+- **Validate WHERE on reads first**: before an `UPDATE`/`DELETE`, run the same
+  `WHERE` as a `SELECT COUNT(*)` to confirm scope.
+- **Match flags to intent**: DML -> `--write`; DDL -> `--write --ddl`;
+  destructive -> add `--yes`. Don't add `--yes` speculatively.
+- **Reuse the connection model**: each invocation opens and closes its own pool
+  (and SSH tunnel). Don't try to hold connections across calls; just issue
+  separate commands.
+- **Prefer read-only DB users**: configure the default datasource with a
+  read-only user; force writes to go through an explicit `-d` profile.
