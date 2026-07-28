@@ -45,13 +45,22 @@
 
 #### 安装
 
-**方式一 - `go install`(推荐):**
+**方式一 - `npx`(推荐,无需 Go 工具链):**
+
+```bash
+npx @allenmuu/mysql-cli install      # 下载预编译二进制到 ~/.local/bin
+npx skills add AllenMuu/mysql-cli    # 安装 agent skills(交互式)
+```
+
+`npx` 命令会从 GitHub Releases 下载你平台对应的预编译二进制。设置 `MYSQL_CLI_MIRROR` 可使用下载镜像。然后运行 `npx skills add AllenMuu/mysql-cli` 安装 skills。
+
+**方式二 - `go install`:**
 
 ```bash
 go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest
 ```
 
-**方式二 - 源码构建:**
+**方式三 - 源码构建:**
 
 ```bash
 git clone https://github.com/AllenMuu/mysql-cli.git
@@ -102,7 +111,8 @@ go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest
 
 **第 2 步 - 安装 Agent Skills**
 
-通过 [vercel-labs/skills](https://github.com/vercel-labs/skills) 安装 skill(支持 70+ 种 agent):
+`mysql-cli` 通过 [vercel-labs/skills](https://github.com/vercel-labs/skills) 生态为 AI
+agent(Claude Code、Cursor、Codex 以及 70+ 种)提供 skills。
 
 ```bash
 npx skills add AllenMuu/mysql-cli
@@ -183,6 +193,9 @@ ssl_mode = "REQUIRED"
 | `read <table>` | 前 100 行 |
 | `explore` | 数据库 + 表概览 |
 | `analyze <table>` | 一次返回 schema + sample |
+| `version` | 打印 mysql-cli 二进制版本 |
+| `config <sub>` | 管理配置(项目发现、信任、检查) |
+| `help [command]` | 查看任意命令的帮助(也可用 `--help` / `-h`) |
 | *(无)* | 进入交互式 REPL(人类调试) |
 
 ## Flags
