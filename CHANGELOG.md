@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-07-30
+
+### Added
+- `mysql-cli agent init`:为 Claude Code / Cursor / opencode / GitHub Copilot / CodeBuddy 安装 per-agent 写操作确认配置(命中 `--write`/`--ddl`/`--yes` 即弹窗找人类确认)。交互式 + flag 兜底;配置模板内嵌,深合并现有 JSON(幂等,`.bak` 备份)。
+- `install.sh` / `install.ps1`:一键安装(release 二进制 + skills + agent init),macOS/Linux/Windows。
+- Untrusted project config 不再静默回落:命中时 stderr 告警(不含 trust 命令,防 AI 自动 trust);`--no-trust-warn` / `MYSQL_CLI_NO_TRUST_WARN=1` 静默;`--strict-trust` 升级为报错(exit 10)。
+- `config trust` 加固:非交互模式需 `--yes`(TTY 交互 `y/N`),挡 AI 自动 trust。
+
+### Changed
+- Skill `--yes` 措辞收紧:从“确认破坏性操作”改为“标记破坏性操作、触发人类确认弹窗;是请求非豁免”。
+- README 补 `Config resolution` 小节:文件优先级链、同名 datasource 整体替换、不同名并集、`default`/字段覆盖规则。
+
 ## [2.0.0] - 2026-07-27
 
 ### Breaking
