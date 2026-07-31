@@ -69,7 +69,7 @@ cmd/mysql-cli/main  ->  cli（cobra 装配 + 退出码映射 + config 子命令�
 
 配置文件：`~/.config/mysql-cli/config.toml`（`--config` 可覆盖）。数据源用 `[datasource.<name>]`，顶层 `default` 指定默认；SSH 隧道用 `[datasource.<name>.ssh]` 子表。完整示例见 `README.md`。
 
-子命令与 flag 语义见 `README.md`（`query/txn/schema/sample/tables/databases/read/explore/analyze`，及 `--write/--ddl/--yes/--limit/--timeout/-f`）。默认只读；DML 需 `--write`，DDL 需 `--write --ddl`，`DROP/TRUNCATE` 及无 `WHERE` 的 `UPDATE/DELETE` 需 `--yes`。
+子命令与 flag 语义见 `README.md`（`query/txn/schema/sample/tables/databases/read/explore/analyze`，及 `--write/--ddl/--yes/--limit/--timeout/-f`）。默认只读；DML 需 `--write`，DDL 需 `--write --ddl`，`DROP/TRUNCATE` 及无 `WHERE` 的 `UPDATE/DELETE` 需 `--yes`。运行任何写操作（含 `--write`/`--ddl`/`--yes`）前应提示用户确认；`--yes` 是标记破坏性操作而非豁免。各 agent 的强制确认配置见 `docs/agent-integration.md`。
 
 ## Skill 体系（对接 AI agent）
 
@@ -81,3 +81,11 @@ mysql-cli 的 skill 不再自研安装,而是接入 [vercel-labs/skills](https:/
 - **格式校验**:`scripts/skill-format-check.sh` 校验 SKILL.md frontmatter(name/version/description/metadata + semver),CI `.github/workflows/skill-format-check.yml` PR 时强制。改 skill 后本地跑一遍。
 - **版本真相源**:skill 版本 = 仓库 `skills/*/SKILL.md` frontmatter 的 `version` 字段(不再二进制内嵌)。
 - **无 Node fallback**:手动复制仓库 `skills/` 目录到 agent skill 目录。
+
+## 写操作人类确认（agent init）
+
+`--write`/`--ddl`/`--yes` 是 AI 自传的 flag,CLI 内部无人类确认环节。`mysql-cli agent init` 为各 agent 安装配置,在写操作执行前弹窗找人类确认(命中 `--write`/`--ddl`/`--yes` 即拦,只读放行)。
+
+- **命令**:`mysql-cli agent init`(交互式选 agent + 层级);非交互 `mysql-cli agent init --agents claude,opencode,copilot --project`。
+- **支持**:claude / cursor / opencode / copilot / codebuddy。不含 Codex(hook 未坐实)、TRAE(规则文件格式未坐实)。
+- **实现**:配置模板内嵌于二进制 `internal/agentsetup/templates/`;合并类配置(settings.json/opencode.json/.vscode/settings.json)深合并进现有文件并备份 `.bak`,幂等。详见 `docs/agent-integration.md`。

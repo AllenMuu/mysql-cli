@@ -73,6 +73,11 @@ All commands share global flags (see `mysql-shared`): `-d/--datasource`,
 Writes are gated by safety flags (see `mysql-shared` Security Model).
 Destructive ops additionally need `--yes`.
 
+> **Human confirmation required**: every write flag (`--write`/`--ddl`/`--yes`)
+> triggers a Claude Code permission prompt. `--yes` marks the op as destructive
+> -- it does **not** skip review. Add the flags the op needs; a human approves
+> the actual execution.
+
 | Intent | Command |
 | --- | --- |
 | DML (INSERT/UPDATE/DELETE) | `mysql-cli query "<dml>" --write` |
@@ -82,7 +87,9 @@ Destructive ops additionally need `--yes`.
 
 > Safety flags at a glance:
 > `--write` unlocks DML · `--ddl` unlocks DDL (**requires** `--write`) ·
-> `--yes` confirms destructive ops.
+> `--yes` marks a destructive op. **Every write flag (`--write`/`--ddl`/`--yes`)
+> triggers a human confirmation prompt** -- `--yes` requests execution, it does
+> not self-confirm. Never add `--yes` to bypass human review.
 
 ---
 
