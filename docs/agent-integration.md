@@ -1,75 +1,65 @@
-# 多 Agent 写操作确认适配
+# 多 Agent 写操作确认
 
-mysql-cli 默认只读；写操作由 `--write`/`--ddl`/`--yes` 三个 flag 解锁（见 `skills/mysql-shared/SKILL.md` 的 Security Model）。但这些 flag 是 AI 在命令行里自己传的——`--yes` 的原义是"AI 已确认"，不是"找人类确认"。本目录的各 agent 配置把写操作的确认权**从 AI 手里拿回给人类**：命中写 flag 即弹窗，由用户批准才执行。
+mysql-cli 默认只读；写操作由 `--write`/`--ddl`/`--yes` 解锁。但这些 flag 是 AI 在命令行里自己传的--`--yes` 原义是“AI 已确认”，不是“找人类确认”。`mysql-cli agent init` 把写操作的确认权从 AI 手里拿回给人类：为各 agent 安装配置，命中写 flag 即弹窗，由用户批准才执行。
+
+## 安装
+
+```bash
+mysql-cli agent init
+```
+
+交互式选择你用的 agent + 层级（项目/全局）。非交互环境用 flag：
+
+```bash
+mysql-cli agent init --agents claude,opencode,copilot --project
+mysql-cli agent init --agents codebuddy --global
+mysql-cli agent init --agents cursor --project --dry-run   # 预览不写
+```
+
+支持的 agent（逗号分隔）：`claude` `cursor` `opencode` `copilot` `codebuddy`。
 
 ## 能力对照
 
-| Agent | 配置文件 | 机制 | 精度 |
-| --- | --- | --- | --- |
-| Claude Code | `~/.claude/settings.json` + `~/.claude/hooks/mysql-write-guard.py` | PreToolUse hook → `permissionDecision: ask` | 精确（按 flag） |
-| opencode | `opencode.json` | `permission.bash` 字符级 glob + `ask` | 精确（按 flag） |
-| GitHub Copilot | `.vscode/settings.json` | `chat.tools.terminal.autoApprove` 正则设 `false` | 精确（按 flag） |
-| CodeBuddy | `.codebuddy/settings.json` + `scripts/mysql-write-guard.py` | PreToolUse hook → `ask`（兼容 Claude Code hook） | 精确（按 flag） |
-| Cursor | `.cursor/rules/mysql-cli-write-guard.mdc` | 规则注入模型上下文 | **仅引导**（非硬性） |
-| Codex CLI | 待定（见下） | — | — |
-| TRAE | 暂未适配（官方文档为 JS 渲染 SPA，未坐实规则文件格式） | — | — |
+| Agent | name | 能力 | 机制 |
+|---|---|---|---|
+| Claude Code | `claude` | 精确强制 | PreToolUse hook -> `ask` |
+| opencode | `opencode` | 精确强制 | `permission.bash` glob + `ask` |
+| GitHub Copilot | `copilot` | 精确强制 | `autoApprove` 正则 `false` |
+| CodeBuddy | `codebuddy` | 精确强制 | PreToolUse hook（兼容 Claude Code） |
+| Cursor | `cursor` | 仅引导 | `.cursor/rules` 注入上下文 |
 
-> "精确"= 只对含 `--write`/`--ddl`/`--yes` 的命令弹窗，只读放行；"仅引导"= 依赖模型遵守规则，非引擎级闸门。
+> “精确”= 只对含 `--write`/`--ddl`/`--yes` 的命令弹窗，只读放行；“仅引导”= 依赖模型遵守规则，非引擎级闸门。
+> 不含 Codex（hook 未坐实，`.rules` 无法按 flag 精确拦）、TRAE（规则文件格式未坐实）。
 
-## 配置层级
+## 写入位置
 
-默认全部为**项目级**配置，随本 repo 分发，多人多机共享。若希望仅在本机生效（不随 repo），把对应文件移到各 agent 的用户级路径：
-
-| Agent | 项目级（默认） | 用户级 |
-| --- | --- | --- |
+| Agent | 项目级（`--project`） | 全局（`--global`） |
+|---|---|---|
+| claude | `.claude/settings.json` + `.claude/hooks/mysql-write-guard.py` | `~/.claude/...` |
+| cursor | `.cursor/rules/mysql-cli-write-guard.mdc` | 不支持（IDE 设置） |
 | opencode | `opencode.json` | `~/.config/opencode/opencode.json` |
-| Copilot | `.vscode/settings.json` | VS Code 用户 `settings.json` |
-| CodeBuddy | `.codebuddy/settings.json` | `~/.codebuddy/settings.json` |
-| Cursor | `.cursor/rules/*.mdc` | Cursor 用户规则（IDE 设置） |
-| Claude Code | `~/.claude/settings.json`（已全局） | — |
+| copilot | `.vscode/settings.json` + `.github/copilot-instructions.md` | VS Code 用户 `settings.json` |
+| codebuddy | `.codebuddy/settings.json` + `.codebuddy/hooks/mysql-write-guard.py` | `~/.codebuddy/...` |
 
-> opencode 的 `permission` 在用户级与项目级同时存在时按 last-match-wins 合并；Copilot 的 `autoApprove` 用户级可被项目级覆盖。项目级是推荐默认。
-
-## Codex CLI（待定）
-
-Codex 的命令拦截只有 `~/.codex/rules/*.rules`（Starlark `prefix_rule`），**位置前缀匹配，无 regex/无通配/无自定义脚本**，无法精确按 flag 拦截。官方 docs 目录（15 个文件）无 `hooks.md`，`config.md`/`execpolicy`/`example-config` 均无可编程命令拦截 hook；仅 `requirements.toml` 的 `allow_managed_hooks_only` 暗示存在某种 hook configs，但官方未文档化其能力。
-
-两条可用路径，二选一（或叠加）：
-
-1. **粗粒度强制**——对所有 `mysql-cli` 调用 prompt（只读也会弹窗）：
-   ```python
-   # ~/.codex/rules/mysql.rules
-   prefix_rule(
-       pattern = ["mysql-cli"],
-       decision = "prompt",
-       justification = "mysql-cli may perform destructive writes; require human approval.",
-   )
-   ```
-2. **仅引导**——在 `AGENTS.md`（Codex 读）写规则，依赖模型自觉（非强制）。本 repo 的 `AGENTS.md` 已含该指引。
-
-若你确认 Codex 某版本有可编程命令拦截 hook（能跑脚本检测 flag），把文档/字段名补上，我即刻改用 hook 方案。
+合并类配置（`settings.json` / `opencode.json` / `.vscode/settings.json`）会深合并进现有文件并备份 `.bak`，不破坏既有内容；重复安装会按 command/键去重，幂等。单文件类（`.mdc` / instructions / `.md`）默认跳过已存在文件，`--force` 覆盖。
 
 ## 验证
 
-每个 agent 配置后，在新会话里让 AI 跑两条命令对照：
+每个 agent 配置后，新会话里让 AI 跑两条对照：
 
-- 只读（应**放行**，无弹窗）：`mysql-cli query "SELECT 1"`
+- 只读（应**放行**）：`mysql-cli query "SELECT 1"`
 - 写操作（应**弹窗**）：`mysql-cli query "UPDATE t SET a=1 WHERE id=1" --write`
 
-CodeBuddy/Claude Code 的 hook 脚本可单独测：
+hook 脚本可单独测：
 ```bash
 echo '{"tool_name":"Bash","tool_input":{"command":"mysql-cli query \"DROP TABLE x\" --write --yes"}}' \
-  | python3 scripts/mysql-write-guard.py
-# 期望输出: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask",...}}
+  | python3 .codebuddy/hooks/mysql-write-guard.py
+# 期望: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask",...}}
 ```
 
-## 文件清单
+## 原理
 
-- `scripts/mysql-write-guard.py` — 公共 PreToolUse hook 脚本（CodeBuddy 用；Claude Code 全局有同名副本）。
-- `opencode.json` — opencode 写操作 `permission.bash` 规则。
-- `.vscode/settings.json` — Copilot 终端命令 `autoApprove` 正则。
-- `.codebuddy/settings.json` — CodeBuddy PreToolUse hook 注册。
-- `.cursor/rules/mysql-cli-write-guard.mdc` — Cursor 引导规则。
-- `.github/copilot-instructions.md` — Copilot 仓库级指令（引导补充）。
-- `CODEBUDDY.md` — CodeBuddy 主规则（引导补充）。
-- `AGENTS.md` — 通用 agent 入口，已追加写操作确认指引（Codex/opencode 等读）。
+- `--yes` 是 AI 传的 flag，CLI 内部无人类确认环节；`agent init` 装的配置在 agent 执行命令前拦截，把含 `--write`/`--ddl`/`--yes` 的执行交给人类弹窗批准。
+- hook 脚本用 shlex 精确匹配 flag token，SQL 字面量里的 `--write` 文本不会误伤；回退正则只认独立 token，兼容 `bash -c` 包裹。
+- CodeBuddy / Claude Code 依赖其兼容 Claude Code PreToolUse hook（CodeBuddy 已交叉验证；若某版本不认 `ask` JSON，回退 `exit 2` 阻断）。
+- 配置模板内嵌于 mysql-cli 二进制（`internal/agentsetup/templates/`），随版本发布；升级 mysql-cli 后重跑 `agent init` 即可刷新。

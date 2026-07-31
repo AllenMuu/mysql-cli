@@ -48,6 +48,14 @@ binary with **JSON by default** and **stable exit codes**, so any agent
 
 #### Install
 
+**One-shot installer** (binary + skills + per-agent write-confirmation configs):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AllenMuu/mysql-cli/main/install.sh -o install.sh
+bash install.sh        # macOS/Linux; run directly so prompts work (not curl|bash)
+# Windows: .\install.ps1  (in repo root)
+```
+
 **Option 1 - `npx` (recommended, no Go toolchain needed):**
 
 ```bash
@@ -259,6 +267,22 @@ Identifiers are validated against a strict allowlist (`^[a-zA-Z0-9_$]+$`);
 multi-statement input is rejected (use `txn`). The read-only / multi-statement
 checks run **before** a connection is opened, so agents get the right exit code
 without touching the database.
+
+### Human confirmation for writes
+
+`--write`/`--yes` are flags the AI passes itself, so the CLI alone can't pull a
+human into the loop. `mysql-cli agent init` installs per-agent configs that
+prompt a human before any write runs:
+
+```bash
+mysql-cli agent init                                       # interactive: pick agents + scope
+mysql-cli agent init --agents claude,opencode,copilot --project
+mysql-cli agent init --agents codebuddy --global
+```
+
+Supports Claude Code, Cursor, opencode, GitHub Copilot, CodeBuddy. See
+[`docs/agent-integration.md`](./docs/agent-integration.md) for the capability
+matrix and per-agent install paths.
 
 ## SSH tunnel
 

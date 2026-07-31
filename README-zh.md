@@ -45,6 +45,14 @@
 
 #### 安装
 
+**一键脚本**(二进制 + skills + 各 agent 写操作确认配置):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AllenMuu/mysql-cli/main/install.sh -o install.sh
+bash install.sh        # macOS/Linux;直接运行而非 curl|bash,以保留交互提示
+# Windows: .\install.ps1  (仓库根目录)
+```
+
 **方式一 - `npx`(推荐,无需 Go 工具链):**
 
 ```bash
@@ -247,6 +255,18 @@ ssl_mode = "REQUIRED"
 
 标识符按严格白名单校验(`^[a-zA-Z0-9_$]+$`);多语句输入被拒绝(请用 `txn`)。
 只读 / 多语句检查在**打开连接之前**执行,因此 agent 无需触碰数据库即可拿到正确退出码。
+
+### 写操作的人类确认
+
+`--write`/`--yes` 是 AI 自己传的 flag,CLI 自身无法把人类拉进确认环节。`mysql-cli agent init` 为各 agent 安装配置,在写操作执行前弹窗找人类确认:
+
+```bash
+mysql-cli agent init                                       # 交互式:选 agent + 层级
+mysql-cli agent init --agents claude,opencode,copilot --project
+mysql-cli agent init --agents codebuddy --global
+```
+
+支持 Claude Code、Cursor、opencode、GitHub Copilot、CodeBuddy。能力对照与各 agent 写入路径见 [`docs/agent-integration.md`](./docs/agent-integration.md)。
 
 ## SSH 隧道
 

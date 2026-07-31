@@ -31,7 +31,7 @@ func applyHelpGrouping(root *cobra.Command) {
 			c.GroupID = groupSQL
 		case "schema", "sample", "tables", "databases", "read", "explore", "analyze":
 			c.GroupID = groupSchema
-		case "config", "skill", "init", "version":
+		case "config", "skill", "init", "version", "agent":
 			c.GroupID = groupManage
 		}
 	}
@@ -52,4 +52,6 @@ Agent notes:
     DROP/TRUNCATE and WHERE-less UPDATE/DELETE need --yes.
   Skills: 'mysql-cli skill install' installs agent skills;
     'mysql-cli skill check' verifies version sync.
+  Write guard: 'mysql-cli agent init' installs per-agent configs that prompt a
+    human before mysql-cli writes (--write/--ddl/--yes).
 `

@@ -1,0 +1,18 @@
+---
+description: Guard mysql-cli write/ddl/destructive operations; request human approval before running them
+globs:
+alwaysApply: true
+---
+# mysql-cli 写操作守卫
+
+`mysql-cli` 默认只读。若命令行包含 `--write`、`--ddl`、`--yes` 中的任意一个，即为写/破坏性操作。
+
+执行前**必须**：
+
+1. 停下来，向用户展示完整命令与影响范围；
+2. 明确请求人工确认；
+3. 未获明确批准前不得执行。
+
+`--yes` 是“标记破坏性操作”，**不是**豁免确认——不得用 `--yes` 绕过本规则。
+
+完整安全模型见 `skills/mysql-shared/SKILL.md` 的 Security Model 段。

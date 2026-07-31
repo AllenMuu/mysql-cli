@@ -109,6 +109,7 @@ func newRootCmd(g *Globals) *cobra.Command {
 		newExploreCmd(g),
 		newAnalyzeCmd(g),
 		newConfigCmd(g),
+		newAgentCmd(g),
 		newVersionCmd(),
 	)
 	// No subcommand -> interactive REPL (human debug; not the agent path).
