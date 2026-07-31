@@ -12,7 +12,7 @@ metadata:
   config_file: ~/.config/mysql-cli/config.toml
   default_output: json
   output_formats: json | table | csv | tsv | jsonl
-  safety_model: read-only by default; --write (DML), --write --ddl (DDL), --yes (destructive); SELECT default cap 1000 (--no-limit to disable)
+  safety_model: read-only by default; --write (DML), --write --ddl (DDL), --yes (destructive); every write flag triggers a human confirmation prompt (PreToolUse hook) -- --yes requests execution, it does not self-confirm; SELECT default cap 1000 (--no-limit to disable)
   license: MIT
   replaces: designcomputer/mysql_mcp_server
 ---
@@ -204,10 +204,15 @@ flag never silently mutates data.
 
 > Safety flags at a glance:
 > `--write` unlocks DML · `--ddl` unlocks DDL (**requires** `--write`) ·
-> `--yes` confirms destructive ops.
+> `--yes` marks a destructive op. **Every write flag triggers a human
+> confirmation prompt** -- `--yes` requests execution, it does not self-confirm.
 
 Additional guarantees:
 
+- **Human-in-the-loop on writes**: a `PreToolUse` hook (global
+  `~/.claude/settings.json`) intercepts any `mysql-cli` call carrying
+  `--write`/`--ddl`/`--yes` and turns it into a Claude Code permission prompt.
+  The AI cannot self-confirm destructive work -- approval is the human's call.
 - **Identifier allowlist**: table/db names must match `^[a-zA-Z0-9_$]+$`;
   qualified `db.table` is allowed. Prevents injection in schema-exploration SQL.
 - **Multi-statement rejection**: `query` accepts a single statement (one
@@ -231,7 +236,8 @@ Additional guarantees:
 - **Validate WHERE on reads first**: before an `UPDATE`/`DELETE`, run the same
   `WHERE` as a `SELECT COUNT(*)` to confirm scope.
 - **Match flags to intent**: DML -> `--write`; DDL -> `--write --ddl`;
-  destructive -> add `--yes`. Don't add `--yes` speculatively.
+  destructive -> add `--yes`. Don't add `--yes` speculatively. Any write flag
+  triggers a human confirmation prompt; `--yes` is a request, not a waiver.
 - **Reuse the connection model**: each invocation opens and closes its own pool
   (and SSH tunnel). Don't try to hold connections across calls; just issue
   separate commands.
