@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/AllenMuu/mysql-cli/internal/config"
 	"github.com/spf13/cobra"
@@ -129,6 +130,22 @@ func newConfigTrustCmd(g *Globals) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("cannot resolve path %q: %w", root, err)
 			}
+			// Trust is a security decision: it enables a project's config
+			// (which may carry ${ENV} credentials). Require explicit --yes,
+			// or an interactive y/N on a TTY. Non-interactive (AI) callers
+			// must pass --yes; AI agents must not auto-trust.
+			yes, _ := cmd.Flags().GetBool("yes")
+			if !yes {
+				if !stdinIsTerminal() {
+					return errors.New("config trust enables a project's config (security decision); in non-interactive mode pass --yes to confirm. A human should decide; AI agents must not auto-trust")
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Trust %s? This loads its .config/mysql-cli/config.toml [y/N] ", abs)
+				var resp string
+				fmt.Scanln(&resp)
+				if !strings.EqualFold(strings.TrimSpace(resp), "y") {
+					return errors.New("trust cancelled")
+				}
+			}
 			if err := config.AddTrust(home, abs); err != nil {
 				return err
 			}
@@ -144,6 +161,7 @@ func newConfigTrustCmd(g *Globals) *cobra.Command {
 		},
 	}
 	c.Flags().BoolP("json", "j", false, "emit JSON")
+	c.Flags().Bool("yes", false, "confirm trust (required in non-interactive mode)")
 	return c
 }
 
@@ -183,7 +201,7 @@ func newConfigShowCmd(g *Globals) *cobra.Command {
 				return errors.New("cannot determine home: $HOME is empty")
 			}
 			cwd, _ := os.Getwd()
-			merged, _, err := config.Load(config.LoadOpts{
+			merged, entries, err := config.Load(config.LoadOpts{
 				ConfigFlag: explicitConfigFlag(g),
 				EnvConfig:  os.Getenv("MYSQL_CLI_CONFIG"),
 				Cwd:        cwd,
@@ -191,6 +209,9 @@ func newConfigShowCmd(g *Globals) *cobra.Command {
 				IsTrusted:  func(root string) bool { return config.IsTrusted(home, root) },
 			})
 			if err != nil {
+				return err
+			}
+			if err := g.warnUntrustedProject(entries, merged); err != nil {
 				return err
 			}
 			asJSON, _ := cmd.Flags().GetBool("json")

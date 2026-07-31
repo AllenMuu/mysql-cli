@@ -67,7 +67,7 @@ cmd/mysql-cli/main  ->  cli（cobra 装配 + 退出码映射 + config 子命令�
 
 ## 配置与调用
 
-配置文件：`~/.config/mysql-cli/config.toml`（`--config` 可覆盖）。数据源用 `[datasource.<name>]`，顶层 `default` 指定默认；SSH 隧道用 `[datasource.<name>.ssh]` 子表。完整示例见 `README.md`。
+配置文件：`~/.config/mysql-cli/config.toml`（`--config` 可覆盖）。数据源用 `[datasource.<name>]`，顶层 `default` 指定默认；SSH 隧道用 `[datasource.<name>.ssh]` 子表。完整示例见 `README.md`。**项目级 config**（`<project>/.config/mysql-cli/config.toml`）默认不加载（防恶意 repo 注入）；未 trust 时回落全局并在 stderr 告警，`mysql-cli config trust --yes` 信任（非交互需 `--yes`，AI 不得自动 trust），`--strict-trust` 可升级为报错。
 
 子命令与 flag 语义见 `README.md`（`query/txn/schema/sample/tables/databases/read/explore/analyze`，及 `--write/--ddl/--yes/--limit/--timeout/-f`）。默认只读；DML 需 `--write`，DDL 需 `--write --ddl`，`DROP/TRUNCATE` 及无 `WHERE` 的 `UPDATE/DELETE` 需 `--yes`。运行任何写操作（含 `--write`/`--ddl`/`--yes`）前应提示用户确认；`--yes` 是标记破坏性操作而非豁免。各 agent 的强制确认配置见 `docs/agent-integration.md`。
 

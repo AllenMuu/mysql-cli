@@ -78,9 +78,14 @@ config and merged override-style (similar to MCP's `.mcp.json`).
   root). Shares the relative path `.config/mysql-cli/config.toml` with the global
   `~/.config/mysql-cli/config.toml`; only the root differs.
 - **Trust mechanism (security)**: project-level config is **not loaded** by
-  default. First run `mysql-cli config trust` inside the project directory to
-  write the project root into the trust list at `~/.config/mysql-cli/trusted`.
-  When untrusted, it **silently falls back to global** (exit 0, no error);
+  default. First run `mysql-cli config trust --yes` inside the project directory
+  to write the project root into the trust list at `~/.config/mysql-cli/trusted`.
+  `config trust` requires `--yes` in non-interactive mode (or an interactive
+  `y/N` prompt on a TTY) -- **AI agents must NOT auto-trust**; a human decides.
+  When untrusted, it **falls back to global** (exit 0) and prints a **stderr
+  WARN** naming the skipped project config (the warning deliberately omits the
+  trust command, to avoid AI auto-trusting). Suppress with `--no-trust-warn` or
+  `MYSQL_CLI_NO_TRUST_WARN=1`; escalate to a hard error with `--strict-trust`.
   `${ENV}` password placeholders expand only in trusted project-level configs -
   preventing malicious repos from harvesting local env vars or hijacking
   connections.

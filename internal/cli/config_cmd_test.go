@@ -29,7 +29,7 @@ func TestConfigTrust_DefaultCwd(t *testing.T) {
 	sub := filepath.Join(projRoot, "sub")
 	os.MkdirAll(sub, 0o755)
 	os.Chdir(sub)
-	code := Run([]string{"config", "trust"})
+	code := Run([]string{"config", "trust", "--yes"})
 	assert.Equal(t, ExitOK, code)
 	// Exact equality on the trimmed trust-file content: a BROKEN DiscoverProject
 	// (found=false -> fallback root=dir=projRoot/sub) would record projRoot/sub,
@@ -56,8 +56,8 @@ func TestConfigTrust_Idempotent(t *testing.T) {
 	sub := filepath.Join(projRoot, "sub")
 	os.MkdirAll(sub, 0o755)
 	os.Chdir(sub)
-	assert.Equal(t, ExitOK, Run([]string{"config", "trust"}))
-	assert.Equal(t, ExitOK, Run([]string{"config", "trust"})) // no duplicate
+	assert.Equal(t, ExitOK, Run([]string{"config", "trust", "--yes"}))
+	assert.Equal(t, ExitOK, Run([]string{"config", "trust", "--yes"})) // no duplicate
 	// Exact equality proves idempotency: two trust calls must still produce a
 	// single trimmed line == want. Substring Count would still pass for a
 	// broken DiscoverProject (projRoot is a substring of projRoot/sub).
@@ -92,7 +92,7 @@ func TestConfigTrust_JSON(t *testing.T) {
 	r, w, _ := os.Pipe()
 	t.Cleanup(func() { os.Stdout = orig; r.Close() })
 	os.Stdout = w
-	code := Run([]string{"config", "trust", "-j"})
+	code := Run([]string{"config", "trust", "-j", "--yes"})
 	w.Close()
 	os.Stdout = orig
 	out, _ := io.ReadAll(r)
@@ -140,7 +140,7 @@ func TestConfigPath_ShowsProjectAndGlobal(t *testing.T) {
 	os.Chdir(sub)
 
 	// Trust projRoot first so the project entry is [trusted], not [untrusted, skipped].
-	assert.Equal(t, ExitOK, Run([]string{"config", "trust"}))
+	assert.Equal(t, ExitOK, Run([]string{"config", "trust", "--yes"}))
 
 	// Capture os.Stdout (config path writes via cmd.OutOrStdout() -> os.Stdout).
 	// Pre-register t.Cleanup BEFORE mutating os.Stdout so a panic between the

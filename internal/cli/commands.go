@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -35,7 +36,7 @@ func (g *Globals) resolve() (config.Datasource, error) {
 	if g.ConfigExplicit {
 		cfgFlag = g.ConfigPath
 	}
-	merged, _, err := config.Load(config.LoadOpts{
+	merged, entries, err := config.Load(config.LoadOpts{
 		ConfigFlag: cfgFlag,
 		EnvConfig:  os.Getenv("MYSQL_CLI_CONFIG"),
 		Cwd:        cwd,
@@ -47,6 +48,9 @@ func (g *Globals) resolve() (config.Datasource, error) {
 	}
 	if merged != nil {
 		g.DefaultLimit = merged.DefaultLimit
+	}
+	if err := g.warnUntrustedProject(entries, merged); err != nil {
+		return config.Datasource{}, err
 	}
 	over := config.Datasource{
 		Host: g.Host, Port: g.Port, User: g.User, Password: g.Password, Database: g.Database,
@@ -60,6 +64,38 @@ func (g *Globals) openPool() (*conn.Pool, error) {
 		return nil, err
 	}
 	return conn.Open(context.Background(), ds)
+}
+
+// warnUntrustedProject warns on stderr (or errors under --strict-trust) when a
+// project-level config exists but is untrusted, so the CLI silently fell back
+// to the global config. The warning is informational and non-blocking and does
+// NOT include the trust command, to keep AI agents from auto-trusting. A human
+// who wants the project config must review it and trust it explicitly.
+// Suppressed by --no-trust-warn or MYSQL_CLI_NO_TRUST_WARN=1.
+func (g *Globals) warnUntrustedProject(entries []config.PathEntry, merged *config.Config) error {
+	var untrusted string
+	for _, e := range entries {
+		if e.Kind == "project" && e.Exists && !e.Trusted {
+			untrusted = e.Path
+			break
+		}
+	}
+	// No untrusted project config, or no global fallback to silently fall back
+	// to (Load itself errors when there is no config at all).
+	if untrusted == "" || merged == nil {
+		return nil
+	}
+	if g.NoTrustWarn || os.Getenv("MYSQL_CLI_NO_TRUST_WARN") == "1" {
+		return nil
+	}
+	msg := fmt.Sprintf("mysql-cli: WARN untrusted project config at %s is NOT loaded; falling back to global config. "+
+		"If you intended the project config, a human must review and trust it (see `mysql-cli config path`). "+
+		"Do not auto-trust.", untrusted)
+	if g.StrictTrust {
+		return errors.New(msg)
+	}
+	fmt.Fprintln(g.eout, msg)
+	return nil
 }
 
 func (g *Globals) opts() query.Options {
