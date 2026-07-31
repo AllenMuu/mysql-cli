@@ -198,6 +198,19 @@ Resolution priority: **CLI flag > env > file > default**. Passwords support `${E
 placeholders. All `MYSQL_*` environment variables from the original MCP are also
 supported, so migration is zero-config.
 
+### Config resolution
+
+mysql-cli discovers config files in a chain and merges them:
+
+- **File priority (high → low)**: `--config <file>` > `MYSQL_CLI_CONFIG` env > project-level `<project>/.config/mysql-cli/config.toml` (only if [trusted](#project-level-config-trust)) > global `~/.config/mysql-cli/config.toml`.
+- **Short-circuit**: setting `--config` or `MYSQL_CLI_CONFIG` reads only that file; auto-discovery is skipped.
+- **Same-named datasource**: the higher-priority file replaces it wholesale (including its `[ssh]` subtable) -- fields are not merged one by one.
+- **Different-named datasources**: union -- all names from all files are available.
+- **`default` / `default_limit`**: the higher-priority file wins.
+- **Field overrides**: `MYSQL_*` env vars and `--host/--port/--user/--password/--db` flags override the datasource fields from any file.
+
+Example: global defines `[datasource.dev]` + `[datasource.prod]`; a trusted project redefines `[datasource.dev]` (different host) and adds `[datasource.ci]`. Effective config: `dev` (project's), `prod` (global's), `ci` (project's).
+
 ## Commands
 
 | Command | Description |
@@ -283,6 +296,16 @@ mysql-cli agent init --agents codebuddy --global
 Supports Claude Code, Cursor, opencode, GitHub Copilot, CodeBuddy. See
 [`docs/agent-integration.md`](./docs/agent-integration.md) for the capability
 matrix and per-agent install paths.
+
+### Project-level config trust
+
+A project-level `<project>/.config/mysql-cli/config.toml` is **not loaded** by
+default (prevents a cloned malicious repo from injecting credentials). When
+untrusted, mysql-cli falls back to the global config and prints a **stderr
+warning** naming the skipped file (suppress with `--no-trust-warn` or
+`MYSQL_CLI_NO_TRUST_WARN=1`; make it a hard error with `--strict-trust`).
+Trust explicitly with `mysql-cli config trust --yes` (non-interactive) or an
+interactive `y/N` -- AI agents must not auto-trust.
 
 ## SSH tunnel
 

@@ -188,6 +188,19 @@ ssl_mode = "REQUIRED"
 解析优先级:**CLI flag > 环境变量 > 配置文件 > 默认值**。密码支持 `${ENV}` 占位符。
 原 MCP 的全部 `MYSQL_*` 环境变量同样支持,迁移零配置。
 
+### 配置解析
+
+mysql-cli 按链发现配置文件并合并:
+
+- **文件优先级(高 → 低)**:`--config <file>` > `MYSQL_CLI_CONFIG` 环境变量 > 项目级 `<project>/.config/mysql-cli/config.toml`(仅当已 [trust](#项目级-config-信任)) > 全局 `~/.config/mysql-cli/config.toml`。
+- **短路**:设了 `--config` 或 `MYSQL_CLI_CONFIG` 时只读该文件,跳过自动发现。
+- **同名 datasource**:高优先级文件整体替换(含其 `[ssh]` 子表)--字段不逐个合并。
+- **不同名 datasource**:并集--所有文件的所有名字都可用。
+- **`default` / `default_limit`**:高优先级文件胜出。
+- **字段覆盖**:`MYSQL_*` 环境变量与 `--host/--port/--user/--password/--db` flag 覆盖任意文件里的 datasource 字段。
+
+示例:全局定义 `[datasource.dev]` + `[datasource.prod]`;已 trust 的项目重定义 `[datasource.dev]`(不同 host)并新增 `[datasource.ci]`。生效: `dev`(项目的)、`prod`(全局的)、`ci`(项目的)。
+
 ## 命令
 
 | 命令 | 说明 |
@@ -267,6 +280,10 @@ mysql-cli agent init --agents codebuddy --global
 ```
 
 支持 Claude Code、Cursor、opencode、GitHub Copilot、CodeBuddy。能力对照与各 agent 写入路径见 [`docs/agent-integration.md`](./docs/agent-integration.md)。
+
+### 项目级 config 信任
+
+项目级 `<project>/.config/mysql-cli/config.toml` **默认不加载**（防止 clone 来的恶意 repo 注入凭据）。未 trust 时回落全局 config，并在 **stderr 告警** 指出被跳过的文件（`--no-trust-warn` 或 `MYSQL_CLI_NO_TRUST_WARN=1` 静默；`--strict-trust` 升级为报错）。用 `mysql-cli config trust --yes`（非交互）或交互 `y/N` 显式信任--AI 不得自动 trust。
 
 ## SSH 隧道
 

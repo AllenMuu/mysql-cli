@@ -45,6 +45,8 @@ type Globals struct {
 	User           string
 	Password       string
 	Database       string
+	NoTrustWarn    bool
+	StrictTrust    bool
 	out            io.Writer
 	eout           io.Writer
 }
@@ -96,6 +98,8 @@ func newRootCmd(g *Globals) *cobra.Command {
 	pf.StringVar(&g.User, "user", "", "MySQL user")
 	pf.StringVar(&g.Password, "password", "", "MySQL password")
 	pf.StringVar(&g.Database, "db", "", "MySQL database")
+	pf.BoolVar(&g.NoTrustWarn, "no-trust-warn", false, "suppress the untrusted-project-config warning")
+	pf.BoolVar(&g.StrictTrust, "strict-trust", false, "error out (instead of warn) when an untrusted project config is present")
 
 	root.SetOut(g.out)
 	root.AddCommand(
