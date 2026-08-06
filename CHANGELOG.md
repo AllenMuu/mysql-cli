@@ -2,8 +2,13 @@
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-08-06
+
 ### Added
 - `mysql-cli agent init` 新增 TRAE 支持:PreToolUse hook（Claude Code 兼容，matcher=`RunCommand`，顶层 `version: 1`，hook 定义带 `timeout`）。项目级写入 `.trae/hooks.json` + `.trae/hooks/mysql-write-guard.py`，全局写入 `~/.trae-cn/hooks.json` + `~/.trae-cn/hooks/mysql-write-guard.py`（路径不对称是 TRAE 官方设计，国际版/中国版相同）。复用现有 `mysql-write-guard.py`，hook 命令路径用 `${TRAE_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$PWD}}` 保持可移植。
+
+### Changed
+- README 重写:agent init 章节表述更清晰。
 
 ## [2.0.1] - 2026-07-30
 
