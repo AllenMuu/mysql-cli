@@ -91,7 +91,7 @@ type Agent struct {
 }
 
 // Agents is the ordered registry of supported agents.
-var Agents = []Agent{claudeCode, cursor, opencode, copilot, codebuddy}
+var Agents = []Agent{claudeCode, cursor, opencode, copilot, codebuddy, trae}
 
 // Lookup returns the agent with the given name.
 func Lookup(name string) (Agent, bool) {
@@ -364,6 +364,37 @@ var codebuddy = Agent{
 	},
 }
 
+var trae = Agent{
+	Name: "trae",
+	Desc: "TRAE (PreToolUse hook -> ask, Claude Code compatible)",
+	Cap:  CapEnforce,
+	steps: func(o InstallOpts) ([]step, error) {
+		// TRAE's path layout is intentionally asymmetric (per official docs):
+		//   global  -> ~/.trae-cn/hooks.json         (note the "-cn" suffix)
+		//   project -> $PROJECT_FOLDER/.trae/hooks.json
+		// Both international and China editions use the same paths.
+		var base, hookPath, hookCmd string
+		if o.Scope == ScopeGlobal {
+			base = filepath.Join(o.Home, ".trae-cn")
+			hookPath = filepath.Join(base, "hooks", "mysql-write-guard.py")
+			hookCmd = `python3 "$HOME/.trae-cn/hooks/mysql-write-guard.py"`
+		} else {
+			base = filepath.Join(o.ProjectDir, ".trae")
+			hookPath = filepath.Join(base, "hooks", "mysql-write-guard.py")
+			// TRAE injects TRAE_PROJECT_DIR (and CLAUDE_PROJECT_DIR for compat);
+			// fall back to $PWD so the command stays portable.
+			hookCmd = `python3 "${TRAE_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$PWD}}/.trae/hooks/mysql-write-guard.py"`
+		}
+		// TRAE's standardized tool name for terminal execution is "RunCommand"
+		// (not Claude Code's "Bash").
+		frag := traeHookFragment("RunCommand", hookCmd)
+		return []step{
+			{path: hookPath, action: actionCopyScript, content: hookScript},
+			{path: filepath.Join(base, "hooks.json"), action: actionMergeJSON, fragment: frag},
+		}, nil
+	},
+}
+
 // preToolUseFragment builds a hooks.PreToolUse fragment for matcher/bash-hook.
 func preToolUseFragment(matcher, hookCmd string) map[string]any {
 	return map[string]any{
@@ -373,6 +404,30 @@ func preToolUseFragment(matcher, hookCmd string) map[string]any {
 					"matcher": matcher,
 					"hooks": []any{
 						map[string]any{"type": "command", "command": hookCmd},
+					},
+				},
+			},
+		},
+	}
+}
+
+// traeHookFragment builds a TRAE-style hooks.json fragment. TRAE's hooks.json
+// schema differs from Claude Code's settings.json: it has a top-level
+// "version: 1" and each hook definition carries a "timeout" (default 30). The
+// matcher uses TRAE's standardized tool name "RunCommand" (not "Bash").
+func traeHookFragment(matcher, hookCmd string) map[string]any {
+	return map[string]any{
+		"version": 1,
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				map[string]any{
+					"matcher": matcher,
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": hookCmd,
+							"timeout": 30,
+						},
 					},
 				},
 			},

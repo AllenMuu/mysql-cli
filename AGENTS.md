@@ -87,5 +87,5 @@ mysql-cli 的 skill 不再自研安装,而是接入 [vercel-labs/skills](https:/
 `--write`/`--ddl`/`--yes` 是 AI 自传的 flag,CLI 内部无人类确认环节。`mysql-cli agent init` 为各 agent 安装配置,在写操作执行前弹窗找人类确认(命中 `--write`/`--ddl`/`--yes` 即拦,只读放行)。
 
 - **命令**:`mysql-cli agent init`(交互式选 agent + 层级);非交互 `mysql-cli agent init --agents claude,opencode,copilot --project`。
-- **支持**:claude / cursor / opencode / copilot / codebuddy。不含 Codex(hook 未坐实)、TRAE(规则文件格式未坐实)。
+- **支持**:claude / cursor / opencode / copilot / codebuddy / trae。不含 Codex(hook 未坐实)。
 - **实现**:配置模板内嵌于二进制 `internal/agentsetup/templates/`;合并类配置(settings.json/opencode.json/.vscode/settings.json)深合并进现有文件并备份 `.bak`,幂等。详见 `docs/agent-integration.md`。
