@@ -16,7 +16,7 @@ mysql-cli agent init --agents codebuddy --global
 mysql-cli agent init --agents cursor --project --dry-run   # 预览不写
 ```
 
-支持的 agent（逗号分隔）：`claude` `cursor` `opencode` `copilot` `codebuddy`。
+支持的 agent（逗号分隔）：`claude` `cursor` `opencode` `copilot` `codebuddy` `trae`。
 
 ## 能力对照
 
@@ -26,10 +26,11 @@ mysql-cli agent init --agents cursor --project --dry-run   # 预览不写
 | opencode | `opencode` | 精确强制 | `permission.bash` glob + `ask` |
 | GitHub Copilot | `copilot` | 精确强制 | `autoApprove` 正则 `false` |
 | CodeBuddy | `codebuddy` | 精确强制 | PreToolUse hook（兼容 Claude Code） |
+| TRAE | `trae` | 精确强制 | PreToolUse hook（Claude Code 兼容，matcher=`RunCommand`） |
 | Cursor | `cursor` | 仅引导 | `.cursor/rules` 注入上下文 |
 
 > “精确”= 只对含 `--write`/`--ddl`/`--yes` 的命令弹窗，只读放行；“仅引导”= 依赖模型遵守规则，非引擎级闸门。
-> 不含 Codex（hook 未坐实，`.rules` 无法按 flag 精确拦）、TRAE（规则文件格式未坐实）。
+> 不含 Codex（hook 未坐实，`.rules` 无法按 flag 精确拦）。
 
 ## 写入位置
 
@@ -40,8 +41,11 @@ mysql-cli agent init --agents cursor --project --dry-run   # 预览不写
 | opencode | `opencode.json` | `~/.config/opencode/opencode.json` |
 | copilot | `.vscode/settings.json` + `.github/copilot-instructions.md` | VS Code 用户 `settings.json` |
 | codebuddy | `.codebuddy/settings.json` + `.codebuddy/hooks/mysql-write-guard.py` | `~/.codebuddy/...` |
+| trae | `.trae/hooks.json` + `.trae/hooks/mysql-write-guard.py` | `~/.trae-cn/hooks.json` + `~/.trae-cn/hooks/mysql-write-guard.py` |
 
-合并类配置（`settings.json` / `opencode.json` / `.vscode/settings.json`）会深合并进现有文件并备份 `.bak`，不破坏既有内容；重复安装会按 command/键去重，幂等。单文件类（`.mdc` / instructions / `.md`）默认跳过已存在文件，`--force` 覆盖。
+> TRAE 路径不对称：项目级用 `.trae`，全局用 `~/.trae-cn`（带 `-cn` 后缀，国际版/中国版相同）。这是 TRAE 官方设计，非 bug。TRAE `hooks.json` 顶层有 `version: 1`，matcher 用标准化工具名 `RunCommand`（非 Claude Code 的 `Bash`），hook 定义带 `timeout`。详见 [TRAE Hook 配置参考](https://docs.trae.cn/ide_hook-configuration-reference)。
+
+合并类配置（`settings.json` / `opencode.json` / `.vscode/settings.json` / TRAE `.trae/hooks.json`）会深合并进现有文件并备份 `.bak`，不破坏既有内容；重复安装会按 command/键去重，幂等。单文件类（`.mdc` / instructions / `.md`）默认跳过已存在文件，`--force` 覆盖。
 
 ## 验证
 
@@ -50,10 +54,10 @@ mysql-cli agent init --agents cursor --project --dry-run   # 预览不写
 - 只读（应**放行**）：`mysql-cli query "SELECT 1"`
 - 写操作（应**弹窗**）：`mysql-cli query "UPDATE t SET a=1 WHERE id=1" --write`
 
-hook 脚本可单独测：
+hook 脚本可单独测（以 trae 为例，注意 TRAE 用 `RunCommand` 作为 `tool_name`；claude/codebuddy 用 `Bash`）：
 ```bash
-echo '{"tool_name":"Bash","tool_input":{"command":"mysql-cli query \"DROP TABLE x\" --write --yes"}}' \
-  | python3 .codebuddy/hooks/mysql-write-guard.py
+echo '{"tool_name":"RunCommand","tool_input":{"command":"mysql-cli query \"DROP TABLE x\" --write --yes"}}' \
+  | python3 .trae/hooks/mysql-write-guard.py
 # 期望: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask",...}}
 ```
 
@@ -61,5 +65,5 @@ echo '{"tool_name":"Bash","tool_input":{"command":"mysql-cli query \"DROP TABLE 
 
 - `--yes` 是 AI 传的 flag，CLI 内部无人类确认环节；`agent init` 装的配置在 agent 执行命令前拦截，把含 `--write`/`--ddl`/`--yes` 的执行交给人类弹窗批准。
 - hook 脚本用 shlex 精确匹配 flag token，SQL 字面量里的 `--write` 文本不会误伤；回退正则只认独立 token，兼容 `bash -c` 包裹。
-- CodeBuddy / Claude Code 依赖其兼容 Claude Code PreToolUse hook（CodeBuddy 已交叉验证；若某版本不认 `ask` JSON，回退 `exit 2` 阻断）。
+- CodeBuddy / Claude Code / TRAE 均依赖 Claude Code 兼容 PreToolUse hook（CodeBuddy 已交叉验证；TRAE 官方提供“导入 Claude Code Hook”开关，stdin/stdout JSON 兼容，但 matcher 用 TRAE 标准化工具名 `RunCommand` 而非 `Bash`；若某版本不认 `ask` JSON，回退 `exit 2` 阻断）。
 - 配置模板内嵌于 mysql-cli 二进制（`internal/agentsetup/templates/`），随版本发布；升级 mysql-cli 后重跑 `agent init` 即可刷新。

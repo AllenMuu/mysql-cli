@@ -12,7 +12,7 @@ can run a shell, it can query MySQL.
 
 [![Version](https://img.shields.io/github/v/release/AllenMuu/mysql-cli?label=version)](https://github.com/AllenMuu/mysql-cli/releases)
 [![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#installation--quick-start)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#install)
 [![Output](https://img.shields.io/badge/output-JSON%20%7C%20table%20%7C%20CSV%20%7C%20TSV-blue)](#output)
 
 </div>
@@ -32,120 +32,81 @@ binary with **JSON by default** and **stable exit codes**, so any agent
 - **Multi-datasource** - named profiles in TOML, with optional SSH tunneling.
 - **One binary** - `go install` and you're done.
 
-## Installation & Quick Start
+## Install
 
-### Requirements
+Pick the path that matches who you are.
 
-- Go **1.22+** (to install via `go install` or build from source)
-- A MySQL database you can reach (host/port/user/password)
-- For AI Agents: any agent that can run shell commands and parse JSON
+### For Human Users
 
-### Quick Start (Human Users)
-
-> **Note for AI assistants:** If you are an AI Agent helping the user install `mysql-cli`,
-> jump directly to [Quick Start (AI Agent)](#quick-start-ai-agent), which contains every
-> step you need to complete.
-
-#### Install
-
-**One-shot installer** (binary + skills + per-agent write-confirmation configs):
+**One-shot installer** (binary + agent skills + write-confirmation configs, macOS/Linux/Windows):
 
 ```bash
+# macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/AllenMuu/mysql-cli/main/install.sh -o install.sh
-bash install.sh        # macOS/Linux; run directly so prompts work (not curl|bash)
-# Windows: .\install.ps1  (in repo root)
+bash install.sh                 # run directly (not curl|bash) so prompts keep their TTY
+# Windows (PowerShell)
+.\install.ps1
 ```
 
-**Option 1 - `npx` (recommended, no Go toolchain needed):**
+The installer runs three steps and prompts you at each interactive one:
+1. Downloads the prebuilt binary to `~/.local/bin` (or `%USERPROFILE%\.local\bin`).
+2. Runs `npx skills add AllenMuu/mysql-cli` so your agent can discover `mysql-cli`.
+3. Runs `mysql-cli agent init` so writes pop up a confirmation prompt (see [Write Confirmation](#write-confirmation-agent-init)).
+
+**Alternatives** if you prefer minimal steps:
 
 ```bash
-npx @allenmuu/mysql-cli install      # installs the prebuilt binary to ~/.local/bin
-npx skills add AllenMuu/mysql-cli    # installs agent skills (interactive)
-```
+# npm wrapper (no Go toolchain needed; prebuilt binary)
+npx @allenmuu/mysql-cli install
 
-The `npx` command downloads the prebuilt binary for your platform from GitHub Releases. Set `MYSQL_CLI_MIRROR` to use a download mirror. Then run `npx skills add AllenMuu/mysql-cli` to install skills.
-
-**Option 2 - `go install`:**
-
-```bash
+# Go install
 go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest
-```
 
-**Option 3 - build from source:**
-
-```bash
-git clone https://github.com/AllenMuu/mysql-cli.git
-cd mysql-cli
+# Build from source
+git clone https://github.com/AllenMuu/mysql-cli.git && cd mysql-cli
 go build -o mysql-cli ./cmd/mysql-cli
 ```
 
-> Requires Go 1.22+.
-
-#### Configure & Use
-
-Create `~/.config/mysql-cli/config.toml` (see [Configure](#configure) for multiple
-datasources, env-var compat, and SSH tunneling):
-
-```toml
-default = "dev"
-
-[datasource.dev]
-host = "127.0.0.1"
-port = 3306
-user = "root"
-password = "${MYSQL_DEV_PASSWORD}"
-database = "app"
-```
-
-Then query:
+Then configure a datasource and query (see [Configure](#configure)):
 
 ```bash
-mysql-cli query "SELECT * FROM users LIMIT 10"        # read (default)
-mysql-cli tables                                       # list tables
-mysql-cli schema users                                 # table structure
-mysql-cli                                              # enter REPL (human debugging)
+mysql-cli config init --global      # writes ~/.config/mysql-cli/config.toml
+# edit the file: host/user/password/database
+mysql-cli query "SELECT * FROM users LIMIT 10"
+mysql-cli                           # enter REPL (human debugging only)
 ```
 
-## Quick Start (AI Agent)
+### For AI Agents
 
-> The following steps are for AI Agents. `mysql-cli` has **no browser-based auth**, so an
-> agent can complete the entire setup over the shell: install the binary, install the
-> Agent Skills, configure a datasource, then verify and run a query.
+`mysql-cli` has **no browser-based auth**. An agent can complete the entire setup
+over the shell in four steps. Keep `-f json` (the default) when driving programmatically - the
+JSON envelope + exit codes are the contract you parse.
 
 **Step 1 - Install the binary**
 
 ```bash
 go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest
+# `mysql-cli` MUST be on PATH - the skills invoke it by name.
+# Fallback: go build -o mysql-cli ./cmd/mysql-cli
 ```
 
-> `mysql-cli` **must be on `PATH`** - the skills invoke it by name. Build from source with
-> `go build -o mysql-cli ./cmd/mysql-cli` if `go install` is unavailable.
+**Step 2 - Install the Agent Skills**
 
-**Step 2 - Install Agent Skills**
-
-mysql-cli ships skills for AI agents (Claude Code, Cursor, Codex, and 70+ more)
-via the [vercel-labs/skills](https://github.com/vercel-labs/skills) ecosystem.
+`mysql-cli` ships skills via the [vercel-labs/skills](https://github.com/vercel-labs/skills)
+ecosystem so agents can discover and call it correctly the first time.
 
 ```bash
+# Interactive (TTY)
 npx skills add AllenMuu/mysql-cli
-```
-
-This opens an interactive picker: select agents, choose scope (project
-`./<agent>/skills/` or global `~/<agent>/skills/`), choose install method
-(symlink recommended), and confirm.
-
-Non-interactive (CI / agents):
-
-```bash
+# Non-interactive (CI / agent)
 npx skills add AllenMuu/mysql-cli --skill '*' -a claude-code -g -y
 ```
 
-> **Install all three skills** (`mysql-shared`, `mysql-query`, `mysql-schema`).
-> `mysql-query` and `mysql-schema` reference `../mysql-shared/SKILL.md`; installing
-> only one breaks the shared-rules reference.
-
-**No Node.js?** Manually copy the `skills/` directory from this repo into your
-agent's skill directory (e.g. `~/.claude/skills/`).
+> Install **all three** skills (`mysql-shared`, `mysql-query`, `mysql-schema`).
+> The latter two reference `../mysql-shared/SKILL.md`; installing only one breaks the reference.
+>
+> No Node.js? Manually copy the repo's `skills/` directory into your agent's skill
+> directory (e.g. `~/.claude/skills/`).
 
 **Step 3 - Configure a datasource**
 
@@ -165,12 +126,84 @@ database = "app"
 **Step 4 - Verify & run**
 
 ```bash
-mysql-cli query "SELECT * FROM users LIMIT 10"        # JSON by default
+mysql-cli query "SELECT * FROM users LIMIT 10"      # JSON by default
 ```
 
-The JSON envelope + exit codes are the contract the agent parses - keep `-f json`
-(the default) when driving programmatically. See [Output](#output) and
-[Exit codes](#exit-codes).
+See [Output](#output) and [Exit codes](#exit-codes) for the response contract.
+
+## Write Confirmation (`agent init`)
+
+`--write` / `--ddl` / `--yes` are flags the **AI passes itself** when it wants to
+mutate data. The CLI alone can't pull a human into the loop. `mysql-cli agent init`
+fixes this by installing per-agent configs that **intercept any command containing
+those flags and prompt a human before it runs**. Read-only commands pass through
+uninterrupted.
+
+### What it installs
+
+| Agent | `--project` (cwd) | `--global` (user-level) | Capability |
+| --- | --- | --- | --- |
+| `claude` | `.claude/settings.json` + `.claude/hooks/mysql-write-guard.py` | `~/.claude/...` | **enforce** (PreToolUse hook → ask) |
+| `cursor` | `.cursor/rules/mysql-cli-write-guard.mdc` | _not supported_ (IDE setting) | **guide** (rule only) |
+| `opencode` | `opencode.json` | `~/.config/opencode/opencode.json` | **enforce** (permission glob → ask) |
+| `copilot` | `.vscode/settings.json` + `.github/copilot-instructions.md` | VS Code User `settings.json` | **enforce** (`autoApprove` regex → false) |
+| `codebuddy` | `.codebuddy/settings.json` + `.codebuddy/hooks/mysql-write-guard.py` | `~/.codebuddy/...` | **enforce** (PreToolUse hook → ask) |
+| `trae` | `.trae/hooks.json` + `.trae/hooks/mysql-write-guard.py` | `~/.trae-cn/hooks.json` + `~/.trae-cn/hooks/mysql-write-guard.py` | **enforce** (PreToolUse hook → ask; matcher `RunCommand`) |
+
+- **enforce** = engine-level gate: only commands with `--write` / `--ddl` / `--yes`
+  trigger the prompt; reads pass silently.
+- **guide** = context instruction; relies on the model honoring it (no engine gate).
+- Codex is **not supported** - its hook story is incomplete and `.rules` can't match flags precisely.
+- Merge-class configs (`settings.json`, `opencode.json`, `.vscode/settings.json`,
+  TRAE `hooks.json`) are **deep-merged** into the existing file with a `.bak` backup;
+  re-running is idempotent. Single-file configs (`.mdc`, `.md`) skip existing files
+  unless `--force` is given.
+- TRAE's asymmetric paths (`.trae` project vs `~/.trae-cn` global, the `-cn` suffix)
+  are TRAE's official design - identical for international and China editions.
+
+### How to run it
+
+```bash
+# Human (interactive TTY): multi-select agents + scope
+mysql-cli agent init
+
+# CI / agent (non-interactive)
+mysql-cli agent init --agents claude,opencode,copilot --project
+mysql-cli agent init --agents codebuddy --global
+mysql-cli agent init --agents cursor --project --dry-run    # preview, write nothing
+mysql-cli agent init --agents claude --project --json       # JSON result
+```
+
+Flags:
+
+| Flag | Purpose |
+| --- | --- |
+| `--agents <a,b,c>` | Comma-separated agent names (required when not a TTY) |
+| `--project` / `--global` | Write to the current project or to the user-level config (exactly one required when not a TTY) |
+| `--force` | Overwrite single-file configs (`.mdc`, `.md`) that already exist |
+| `--dry-run` | Print actions without writing |
+| `-j, --json` | Emit JSON result |
+
+### Verify
+
+After installing, in a **fresh** agent session, ask the agent to run these two
+commands. The read should pass; the write should pop a confirmation prompt.
+
+```bash
+mysql-cli query "SELECT 1"                                         # passes silently
+mysql-cli query "UPDATE t SET a=1 WHERE id=1" --write              # prompts a human
+```
+
+The hook script can be tested standalone (TRAE uses `RunCommand`; Claude/CodeBuddy use `Bash`):
+
+```bash
+echo '{"tool_name":"RunCommand","tool_input":{"command":"mysql-cli query \"DROP TABLE x\" --write --yes"}}' \
+  | python3 .trae/hooks/mysql-write-guard.py
+# expect: {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask",...}}
+```
+
+Full capability matrix, per-agent write paths, and design notes:
+[`docs/agent-integration.md`](./docs/agent-integration.md).
 
 ## Configure
 
@@ -211,6 +244,16 @@ mysql-cli discovers config files in a chain and merges them:
 
 Example: global defines `[datasource.dev]` + `[datasource.prod]`; a trusted project redefines `[datasource.dev]` (different host) and adds `[datasource.ci]`. Effective config: `dev` (project's), `prod` (global's), `ci` (project's).
 
+### Project-level config trust
+
+A project-level `<project>/.config/mysql-cli/config.toml` is **not loaded** by
+default (prevents a cloned malicious repo from injecting credentials). When
+untrusted, mysql-cli falls back to the global config and prints a **stderr
+warning** naming the skipped file (suppress with `--no-trust-warn` or
+`MYSQL_CLI_NO_TRUST_WARN=1`; make it a hard error with `--strict-trust`).
+Trust explicitly with `mysql-cli config trust --yes` (non-interactive) or an
+interactive `y/N` -- **AI agents must not auto-trust**.
+
 ## Commands
 
 | Command | Description |
@@ -225,7 +268,8 @@ Example: global defines `[datasource.dev]` + `[datasource.prod]`; a trusted proj
 | `explore` | Database + table overview |
 | `analyze <table>` | Schema + sample in one shot |
 | `version` | Print the mysql-cli binary version |
-| `config <sub>` | Manage config (project discovery, trust, inspection) |
+| `config <sub>` | Manage config (`init` / `trust` / `path` / `show`) |
+| `agent init` | Install per-agent write-confirmation configs (see [above](#write-confirmation-agent-init)) |
 | `help [command]` | Help about any command (also `--help` / `-h`) |
 | *(none)* | Enter the interactive REPL (human debugging) |
 
@@ -234,11 +278,12 @@ Example: global defines `[datasource.dev]` + `[datasource.prod]`; a trusted proj
 | Flag | Description |
 | --- | --- |
 | `-d, --datasource <name>` | Named datasource from config |
-| `-f, --format json\|table\|csv\|tsv` | Output format (default `json`) |
+| `-f, --format json\|table\|csv\|tsv\|jsonl` | Output format (default `json`) |
 | `--write` | Allow DML |
 | `--ddl` | Allow DDL (requires `--write`) |
-| `--yes` | Confirm destructive operations |
+| `--yes` | Mark destructive operations (triggers human confirmation when an `agent init` config is installed) |
 | `--limit N` | Row limit for `SELECT` |
+| `--no-limit` | Disable the default 1000-row SELECT cap |
 | `--timeout 30s` | Query timeout |
 | `--host/--port/--user/--password/--db` | Connection overrides |
 
@@ -251,7 +296,7 @@ JSON by default (agent-friendly):
 {"success":false,"error":{"code":"READONLY_VIOLATION","message":"UPDATE requires --write"}}
 ```
 
-Switch the human-readable formats with `-f table`, `-f csv`, or `-f tsv`.
+Switch the human-readable formats with `-f table`, `-f csv`, `-f tsv`, or `-f jsonl`.
 
 ### Exit codes
 
@@ -281,31 +326,9 @@ multi-statement input is rejected (use `txn`). The read-only / multi-statement
 checks run **before** a connection is opened, so agents get the right exit code
 without touching the database.
 
-### Human confirmation for writes
-
-`--write`/`--yes` are flags the AI passes itself, so the CLI alone can't pull a
-human into the loop. `mysql-cli agent init` installs per-agent configs that
-prompt a human before any write runs:
-
-```bash
-mysql-cli agent init                                       # interactive: pick agents + scope
-mysql-cli agent init --agents claude,opencode,copilot --project
-mysql-cli agent init --agents codebuddy --global
-```
-
-Supports Claude Code, Cursor, opencode, GitHub Copilot, CodeBuddy. See
-[`docs/agent-integration.md`](./docs/agent-integration.md) for the capability
-matrix and per-agent install paths.
-
-### Project-level config trust
-
-A project-level `<project>/.config/mysql-cli/config.toml` is **not loaded** by
-default (prevents a cloned malicious repo from injecting credentials). When
-untrusted, mysql-cli falls back to the global config and prints a **stderr
-warning** naming the skipped file (suppress with `--no-trust-warn` or
-`MYSQL_CLI_NO_TRUST_WARN=1`; make it a hard error with `--strict-trust`).
-Trust explicitly with `mysql-cli config trust --yes` (non-interactive) or an
-interactive `y/N` -- AI agents must not auto-trust.
+> `--yes` is a **marker**, not a waiver: it tells the CLI "this is a destructive
+> op, please ask a human." When an [`agent init`](#write-confirmation-agent-init)
+> config is installed, that's where the human prompt fires.
 
 ## SSH tunnel
 
@@ -367,11 +390,11 @@ agent's skill directory.
 
 - **`mysql-cli` must be on `PATH`** - install with
   `go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest`, or edit the
-  skill to point at your built binary. / `mysql-cli` 必须在 `PATH` 中。
+  skill to point at your built binary.
 - **Config file** - the skill expects `~/.config/mysql-cli/config.toml`
-  (override with `--config`). See [Configure](#configure). / 需配置文件。
+  (override with `--config`). See [Configure](#configure).
 - **Default JSON output** - the skill relies on the JSON envelope + exit codes;
-  keep `-f json` (the default) when driving programmatically. / 默认 JSON 输出。
+  keep `-f json` (the default) when driving programmatically.
 
 ## Architecture
 
@@ -399,6 +422,7 @@ cmd/mysql-cli/main  ->  cli   (cobra wiring + exit-code mapping)
 | `format` | `result` -> json/table/csv/tsv |
 | `cli` | cobra subcommands + `mapError` (errors -> exit codes) |
 | `repl` | readline shell for human debugging |
+| `agentsetup` | Per-agent write-confirmation configs (templates embedded in the binary) |
 
 ## Acknowledgements
 

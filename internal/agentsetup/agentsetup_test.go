@@ -160,5 +160,121 @@ func TestLookupAndNames(t *testing.T) {
 	assert.Equal(t, CapEnforce, a.Cap)
 	_, ok = Lookup("nope")
 	assert.False(t, ok)
-	assert.Len(t, Names(), 5)
+	assert.Len(t, Names(), 6)
+}
+
+func TestInstall_TraeProject(t *testing.T) {
+	dir := t.TempDir()
+	written, err := trae.Install(InstallOpts{Scope: ScopeProject, ProjectDir: dir})
+	require.NoError(t, err)
+	require.Len(t, written, 2)
+
+	// Project scope uses .trae (without -cn suffix).
+	hookPath := filepath.Join(dir, ".trae", "hooks", "mysql-write-guard.py")
+	hooksJSONPath := filepath.Join(dir, ".trae", "hooks.json")
+	assert.Contains(t, written, hookPath)
+	assert.Contains(t, written, hooksJSONPath)
+
+	// Hook script is executable.
+	info, err := os.Stat(hookPath)
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&0o100, "hook script is executable")
+
+	// hooks.json content: version=1, matcher=RunCommand (not Bash), timeout=30,
+	// and the command path uses TRAE_PROJECT_DIR for portability.
+	data, err := os.ReadFile(hooksJSONPath)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, float64(1), got["version"], "TRAE hooks.json has top-level version=1")
+	hooks, _ := got["hooks"].(map[string]any)
+	pre, _ := hooks["PreToolUse"].([]any)
+	require.Len(t, pre, 1)
+	group, _ := pre[0].(map[string]any)
+	assert.Equal(t, "RunCommand", group["matcher"], "TRAE matcher uses standardized RunCommand")
+	hookList, _ := group["hooks"].([]any)
+	require.Len(t, hookList, 1)
+	h, _ := hookList[0].(map[string]any)
+	assert.Equal(t, "command", h["type"])
+	assert.Equal(t, float64(30), h["timeout"])
+	cmd, _ := h["command"].(string)
+	assert.Contains(t, cmd, "TRAE_PROJECT_DIR")
+	assert.Contains(t, cmd, ".trae/hooks/mysql-write-guard.py")
+}
+
+func TestInstall_TraeGlobal(t *testing.T) {
+	home := t.TempDir()
+	written, err := trae.Install(InstallOpts{Scope: ScopeGlobal, Home: home})
+	require.NoError(t, err)
+	require.Len(t, written, 2)
+
+	// Global scope uses .trae-cn (with -cn suffix) per TRAE's asymmetric design.
+	hookPath := filepath.Join(home, ".trae-cn", "hooks", "mysql-write-guard.py")
+	hooksJSONPath := filepath.Join(home, ".trae-cn", "hooks.json")
+	assert.Contains(t, written, hookPath)
+	assert.Contains(t, written, hooksJSONPath)
+
+	info, err := os.Stat(hookPath)
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&0o100, "hook script is executable")
+
+	data, err := os.ReadFile(hooksJSONPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"version": 1`)
+	assert.Contains(t, string(data), `"RunCommand"`)
+	assert.Contains(t, string(data), `$HOME/.trae-cn/hooks/mysql-write-guard.py`)
+}
+
+func TestInstall_TraeDryRun(t *testing.T) {
+	dir := t.TempDir()
+	written, err := trae.Install(InstallOpts{Scope: ScopeProject, ProjectDir: dir, DryRun: true})
+	require.NoError(t, err)
+	require.Len(t, written, 2)
+
+	// Dry-run emits one "write" + one "merge" description; writes nothing.
+	verbs := map[string]bool{}
+	for _, w := range written {
+		if strings.HasPrefix(w, "write") {
+			verbs["write"] = true
+		}
+		if strings.HasPrefix(w, "merge") {
+			verbs["merge"] = true
+		}
+	}
+	assert.True(t, verbs["write"], "dry-run describes the hook script write")
+	assert.True(t, verbs["merge"], "dry-run describes the hooks.json merge")
+
+	_, err = os.Stat(filepath.Join(dir, ".trae", "hooks.json"))
+	assert.True(t, os.IsNotExist(err), "dry-run must not write")
+	_, err = os.Stat(filepath.Join(dir, ".trae", "hooks", "mysql-write-guard.py"))
+	assert.True(t, os.IsNotExist(err), "dry-run must not write hook script")
+}
+
+func TestInstall_TraeMergesIntoExisting(t *testing.T) {
+	dir := t.TempDir()
+	hooksJSONPath := filepath.Join(dir, ".trae", "hooks.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(hooksJSONPath), 0o755))
+	// Simulate an existing TRAE hooks.json with an unrelated Stop hook.
+	existing := `{"version":1,"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo done"}]}]}}`
+	require.NoError(t, os.WriteFile(hooksJSONPath, []byte(existing), 0o644))
+
+	_, err := trae.Install(InstallOpts{Scope: ScopeProject, ProjectDir: dir})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(hooksJSONPath)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, float64(1), got["version"], "version preserved")
+	hooks, _ := got["hooks"].(map[string]any)
+	// Stop hook must be preserved.
+	_, ok := hooks["Stop"]
+	assert.True(t, ok, "existing Stop hook preserved")
+	// PreToolUse hook added.
+	pre, _ := hooks["PreToolUse"].([]any)
+	require.Len(t, pre, 1)
+
+	// .bak backup created.
+	_, err = os.Stat(hooksJSONPath + ".bak")
+	assert.NoError(t, err, ".bak backup created for hooks.json")
 }

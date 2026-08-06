@@ -8,3 +8,9 @@
 /dist/npm/node_modules/
 /dist/npm/package-lock.json
 /.goreleaser-dist/
+
+# MCP server config (contains DB credentials)
+.mcp.json
+
+# Python bytecode cache
+__pycache__/
