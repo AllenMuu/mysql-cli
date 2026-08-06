@@ -11,7 +11,7 @@
 
 [![版本](https://img.shields.io/github/v/release/AllenMuu/mysql-cli?label=version)](https://github.com/AllenMuu/mysql-cli/releases)
 [![Go 版本](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev)
-[![平台](https://img.shields.io/badge/平台-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#安装与快速开始)
+[![平台](https://img.shields.io/badge/平台-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](#安装)
 [![输出](https://img.shields.io/badge/输出-JSON%20%7C%20table%20%7C%20CSV%20%7C%20TSV-blue)](#输出)
 
 </div>
@@ -30,114 +30,79 @@
 - **多数据源** - TOML 命名 profile,可选 SSH 隧道。
 - **单一二进制** - `go install` 即用。
 
-## 安装与快速开始
+## 安装
 
-### 环境要求
+根据你的身份选择对应路径。
 
-- Go **1.22+**(用于 `go install` 或源码构建)
-- 一个可达的 MySQL 数据库(host / port / user / password)
-- AI Agent 侧:任何能跑 shell 命令并解析 JSON 的 agent
+### 人类用户
 
-### 快速开始(人类用户)
-
-> **给 AI 助手的提示:** 如果你是帮用户安装 `mysql-cli` 的 AI Agent,请直接跳到
-> [快速开始(AI Agent)](#快速开始ai-agent),那里包含了你需要的全部步骤。
-
-#### 安装
-
-**一键脚本**(二进制 + skills + 各 agent 写操作确认配置):
+**一键脚本**(二进制 + agent skills + 写操作确认配置,支持 macOS/Linux/Windows):
 
 ```bash
+# macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/AllenMuu/mysql-cli/main/install.sh -o install.sh
-bash install.sh        # macOS/Linux;直接运行而非 curl|bash,以保留交互提示
-# Windows: .\install.ps1  (仓库根目录)
+bash install.sh                 # 直接运行(不要 curl|bash),以保留交互提示
+# Windows (PowerShell)
+.\install.ps1
 ```
 
-**方式一 - `npx`(推荐,无需 Go 工具链):**
+脚本会跑三步,每一步的交互提示都会问你:
+1. 下载预编译二进制到 `~/.local/bin`(Windows 上是 `%USERPROFILE%\.local\bin`)。
+2. 跑 `npx skills add AllenMuu/mysql-cli`,让你的 agent 能发现 `mysql-cli`。
+3. 跑 `mysql-cli agent init`,让写操作弹出人类确认(见 [写操作确认](#写操作确认agent-init))。
+
+**其他方式**(想精简步骤):
 
 ```bash
-npx @allenmuu/mysql-cli install      # 下载预编译二进制到 ~/.local/bin
-npx skills add AllenMuu/mysql-cli    # 安装 agent skills(交互式)
-```
+# npm wrapper(无需 Go 工具链,下载预编译二进制)
+npx @allenmuu/mysql-cli install
 
-`npx` 命令会从 GitHub Releases 下载你平台对应的预编译二进制。设置 `MYSQL_CLI_MIRROR` 可使用下载镜像。然后运行 `npx skills add AllenMuu/mysql-cli` 安装 skills。
-
-**方式二 - `go install`:**
-
-```bash
+# Go install
 go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest
-```
 
-**方式三 - 源码构建:**
-
-```bash
-git clone https://github.com/AllenMuu/mysql-cli.git
-cd mysql-cli
+# 源码构建
+git clone https://github.com/AllenMuu/mysql-cli.git && cd mysql-cli
 go build -o mysql-cli ./cmd/mysql-cli
 ```
 
-> 需要 Go 1.22+。
-
-#### 配置与使用
-
-创建 `~/.config/mysql-cli/config.toml`(多数据源、环境变量兼容、SSH 隧道见
-[配置](#配置)):
-
-```toml
-default = "dev"
-
-[datasource.dev]
-host = "127.0.0.1"
-port = 3306
-user = "root"
-password = "${MYSQL_DEV_PASSWORD}"
-database = "app"
-```
-
-然后查询:
+然后配置数据源并查询(见[配置](#配置)):
 
 ```bash
-mysql-cli query "SELECT * FROM users LIMIT 10"        # 读(默认)
-mysql-cli tables                                       # 列出表
-mysql-cli schema users                                 # 表结构
-mysql-cli                                              # 进入 REPL(人类调试)
+mysql-cli config init --global      # 写入 ~/.config/mysql-cli/config.toml
+# 编辑文件:host/user/password/database
+mysql-cli query "SELECT * FROM users LIMIT 10"
+mysql-cli                           # 进入 REPL(仅人类调试用)
 ```
 
-## 快速开始(AI Agent)
+### AI Agent
 
-> 以下步骤面向 AI Agent。`mysql-cli` **没有浏览器认证流程**,因此 agent 可在 shell
-> 内完成全部设置:安装二进制、安装 Agent Skills、配置数据源,然后验证并执行查询。
+`mysql-cli` **没有浏览器认证流程**,agent 可在 shell 内分四步完成全部设置。编程式调用时
+保持 `-f json`(默认值)-- JSON 信封 + 退出码是你解析的契约。
 
 **第 1 步 - 安装二进制**
 
 ```bash
 go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest
+# `mysql-cli` 必须在 PATH 中 -- skill 按名字调用它。
+# 备选:go build -o mysql-cli ./cmd/mysql-cli
 ```
-
-> `mysql-cli` **必须在 `PATH` 中** -- skill 按名字调用它。若 `go install` 不可用,用
-> `go build -o mysql-cli ./cmd/mysql-cli` 源码构建。
 
 **第 2 步 - 安装 Agent Skills**
 
-`mysql-cli` 通过 [vercel-labs/skills](https://github.com/vercel-labs/skills) 生态为 AI
-agent(Claude Code、Cursor、Codex 以及 70+ 种)提供 skills。
+`mysql-cli` 通过 [vercel-labs/skills](https://github.com/vercel-labs/skills) 生态提供 skills,
+让 agent 第一次就能正确发现并调用它。
 
 ```bash
+# 交互式(TTY)
 npx skills add AllenMuu/mysql-cli
-```
-
-会打开交互式选择:选 agent、选 scope(project `./<agent>/skills/` 或 global `~/<agent>/skills/`)、选安装方式(推荐 symlink)、确认。
-
-非交互(CI / agent):
-
-```bash
+# 非交互(CI / agent)
 npx skills add AllenMuu/mysql-cli --skill '*' -a claude-code -g -y
 ```
 
-> **务必安装全部 3 个 skill**(`mysql-shared`、`mysql-query`、`mysql-schema`)。
-> `mysql-query` 与 `mysql-schema` 顶部引用 `../mysql-shared/SKILL.md`,只装单个会导致引用断裂。
-
-**无 Node.js?** 手动把仓库 `skills/` 目录复制到 agent 的 skill 目录(如 `~/.claude/skills/`)。
+> 务必安装**全部 3 个** skill(`mysql-shared`、`mysql-query`、`mysql-schema`)。
+> 后两个引用 `../mysql-shared/SKILL.md`,只装单个会导致引用断裂。
+>
+> 无 Node.js?手动把仓库的 `skills/` 目录复制到 agent 的 skill 目录(如 `~/.claude/skills/`)。
 
 **第 3 步 - 配置数据源**
 
@@ -157,11 +122,79 @@ database = "app"
 **第 4 步 - 验证并执行**
 
 ```bash
-mysql-cli query "SELECT * FROM users LIMIT 10"        # 默认 JSON 输出
+mysql-cli query "SELECT * FROM users LIMIT 10"      # 默认 JSON 输出
 ```
 
-JSON 信封 + 退出码是 agent 解析的契约 -- 编程式调用时保持 `-f json`(默认值)。详见
-[输出](#输出)与[退出码](#退出码)。
+响应契约见[输出](#输出)与[退出码](#退出码)。
+
+## 写操作确认(`agent init`)
+
+`--write` / `--ddl` / `--yes` 是 **AI 自己传**的 flag,表示它要修改数据。CLI 自身无法
+把人类拉进确认环节。`mysql-cli agent init` 解决这个问题:为各 agent 安装配置,
+**拦截任何包含这些 flag 的命令,在执行前弹窗找人类确认**。只读命令直接放行。
+
+### 它装了什么
+
+| Agent | `--project`(当前项目) | `--global`(用户级) | 能力 |
+| --- | --- | --- | --- |
+| `claude` | `.claude/settings.json` + `.claude/hooks/mysql-write-guard.py` | `~/.claude/...` | **强制**(PreToolUse hook → ask) |
+| `cursor` | `.cursor/rules/mysql-cli-write-guard.mdc` | _不支持_(IDE 设置) | **引导**(仅规则) |
+| `opencode` | `opencode.json` | `~/.config/opencode/opencode.json` | **强制**(permission glob → ask) |
+| `copilot` | `.vscode/settings.json` + `.github/copilot-instructions.md` | VS Code User `settings.json` | **强制**(`autoApprove` 正则 → false) |
+| `codebuddy` | `.codebuddy/settings.json` + `.codebuddy/hooks/mysql-write-guard.py` | `~/.codebuddy/...` | **强制**(PreToolUse hook → ask) |
+| `trae` | `.trae/hooks.json` + `.trae/hooks/mysql-write-guard.py` | `~/.trae-cn/hooks.json` + `~/.trae-cn/hooks/mysql-write-guard.py` | **强制**(PreToolUse hook → ask;matcher `RunCommand`) |
+
+- **强制** = 引擎级闸门:只有带 `--write` / `--ddl` / `--yes` 的命令才弹窗,只读静默放行。
+- **引导** = 上下文指令,依赖模型自觉遵守(无引擎闸门)。
+- Codex **不支持** -- hook 机制未坐实,`.rules` 无法按 flag 精确拦截。
+- 合并类配置(`settings.json`、`opencode.json`、`.vscode/settings.json`、TRAE `hooks.json`)
+  会**深合并**进现有文件并备份 `.bak`;重复安装幂等。单文件配置(`.mdc`、`.md`)
+  默认跳过已存在文件,`--force` 覆盖。
+- TRAE 路径不对称(项目级 `.trae` vs 全局 `~/.trae-cn`,带 `-cn` 后缀)是 TRAE 官方设计,
+  国际版 / 中国版相同。
+
+### 怎么运行
+
+```bash
+# 人类(交互式 TTY):多选 agent + 层级
+mysql-cli agent init
+
+# CI / agent(非交互)
+mysql-cli agent init --agents claude,opencode,copilot --project
+mysql-cli agent init --agents codebuddy --global
+mysql-cli agent init --agents cursor --project --dry-run    # 预览不写
+mysql-cli agent init --agents claude --project --json       # JSON 结果
+```
+
+Flags:
+
+| Flag | 用途 |
+| --- | --- |
+| `--agents <a,b,c>` | 逗号分隔的 agent 名(非 TTY 时必填) |
+| `--project` / `--global` | 写到当前项目或用户级配置(非 TTY 时二选一必填) |
+| `--force` | 覆盖已存在的单文件配置(`.mdc`、`.md`) |
+| `--dry-run` | 只打印动作,不写文件 |
+| `-j, --json` | 输出 JSON 结果 |
+
+### 验证
+
+装完后,在**新开**的 agent 会话里让它跑两条对照:读应放行,写应弹窗。
+
+```bash
+mysql-cli query "SELECT 1"                                         # 静默放行
+mysql-cli query "UPDATE t SET a=1 WHERE id=1" --write              # 弹窗找人类
+```
+
+hook 脚本可单独测(TRAE 用 `RunCommand`;claude/codebuddy 用 `Bash`):
+
+```bash
+echo '{"tool_name":"RunCommand","tool_input":{"command":"mysql-cli query \"DROP TABLE x\" --write --yes"}}' \
+  | python3 .trae/hooks/mysql-write-guard.py
+# 期望:{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask",...}}
+```
+
+完整能力对照、各 agent 写入路径与设计说明见
+[`docs/agent-integration.md`](./docs/agent-integration.md)。
 
 ## 配置
 
@@ -201,6 +234,13 @@ mysql-cli 按链发现配置文件并合并:
 
 示例:全局定义 `[datasource.dev]` + `[datasource.prod]`;已 trust 的项目重定义 `[datasource.dev]`(不同 host)并新增 `[datasource.ci]`。生效: `dev`(项目的)、`prod`(全局的)、`ci`(项目的)。
 
+### 项目级 config 信任
+
+项目级 `<project>/.config/mysql-cli/config.toml` **默认不加载**(防止 clone 来的恶意 repo 注入凭据)。
+未 trust 时回落全局 config,并在 **stderr 告警**指出被跳过的文件(`--no-trust-warn`
+或 `MYSQL_CLI_NO_TRUST_WARN=1` 静默;`--strict-trust` 升级为报错)。用
+`mysql-cli config trust --yes`(非交互)或交互 `y/N` 显式信任--**AI 不得自动 trust**。
+
 ## 命令
 
 | 命令 | 说明 |
@@ -215,7 +255,8 @@ mysql-cli 按链发现配置文件并合并:
 | `explore` | 数据库 + 表概览 |
 | `analyze <table>` | 一次返回 schema + sample |
 | `version` | 打印 mysql-cli 二进制版本 |
-| `config <sub>` | 管理配置(项目发现、信任、检查) |
+| `config <sub>` | 管理配置(`init` / `trust` / `path` / `show`) |
+| `agent init` | 安装 per-agent 写操作确认配置(见[上文](#写操作确认agent-init)) |
 | `help [command]` | 查看任意命令的帮助(也可用 `--help` / `-h`) |
 | *(无)* | 进入交互式 REPL(人类调试) |
 
@@ -224,11 +265,12 @@ mysql-cli 按链发现配置文件并合并:
 | Flag | 说明 |
 | --- | --- |
 | `-d, --datasource <name>` | 配置中的命名数据源 |
-| `-f, --format json\|table\|csv\|tsv` | 输出格式(默认 `json`) |
+| `-f, --format json\|table\|csv\|tsv\|jsonl` | 输出格式(默认 `json`) |
 | `--write` | 允许 DML |
 | `--ddl` | 允许 DDL(需 `--write`) |
-| `--yes` | 确认破坏性操作 |
+| `--yes` | 标记破坏性操作(装了 `agent init` 配置时会触发人类确认弹窗) |
 | `--limit N` | `SELECT` 行数上限 |
+| `--no-limit` | 关闭默认的 1000 行 SELECT cap |
 | `--timeout 30s` | 查询超时 |
 | `--host/--port/--user/--password/--db` | 连接参数覆盖 |
 
@@ -241,7 +283,7 @@ mysql-cli 按链发现配置文件并合并:
 {"success":false,"error":{"code":"READONLY_VIOLATION","message":"UPDATE requires --write"}}
 ```
 
-用 `-f table`、`-f csv` 或 `-f tsv` 切换为人类可读格式。
+用 `-f table`、`-f csv`、`-f tsv` 或 `-f jsonl` 切换为其他格式。
 
 ### 退出码
 
@@ -269,21 +311,8 @@ mysql-cli 按链发现配置文件并合并:
 标识符按严格白名单校验(`^[a-zA-Z0-9_$]+$`);多语句输入被拒绝(请用 `txn`)。
 只读 / 多语句检查在**打开连接之前**执行,因此 agent 无需触碰数据库即可拿到正确退出码。
 
-### 写操作的人类确认
-
-`--write`/`--yes` 是 AI 自己传的 flag,CLI 自身无法把人类拉进确认环节。`mysql-cli agent init` 为各 agent 安装配置,在写操作执行前弹窗找人类确认:
-
-```bash
-mysql-cli agent init                                       # 交互式:选 agent + 层级
-mysql-cli agent init --agents claude,opencode,copilot --project
-mysql-cli agent init --agents codebuddy --global
-```
-
-支持 Claude Code、Cursor、opencode、GitHub Copilot、CodeBuddy。能力对照与各 agent 写入路径见 [`docs/agent-integration.md`](./docs/agent-integration.md)。
-
-### 项目级 config 信任
-
-项目级 `<project>/.config/mysql-cli/config.toml` **默认不加载**（防止 clone 来的恶意 repo 注入凭据）。未 trust 时回落全局 config，并在 **stderr 告警** 指出被跳过的文件（`--no-trust-warn` 或 `MYSQL_CLI_NO_TRUST_WARN=1` 静默；`--strict-trust` 升级为报错）。用 `mysql-cli config trust --yes`（非交互）或交互 `y/N` 显式信任--AI 不得自动 trust。
+> `--yes` 是**标记**,不是豁免:它告诉 CLI "这是破坏性操作,请找人类确认"。
+> 装了 [`agent init`](#写操作确认agent-init) 配置时,弹窗就在那里触发。
 
 ## SSH 隧道
 
@@ -325,7 +354,9 @@ Skills 编码了触发条件、前置检查、命令参考、安全模型与错�
 
 ### 其他 agent
 
-`mysql-cli` 兼容**任何能跑 shell 命令并解析 JSON 的 agent**。`npx skills add` 安装器(vercel-labs/skills)支持 Claude Code、Cursor、Codex 以及 70+ 种 agent;它以 symlink 方式安装每个 skill,因此更新仓库即可自动同步。
+`mysql-cli` 兼容**任何能跑 shell 命令并解析 JSON 的 agent**。`npx skills add` 安装器
+(vercel-labs/skills)支持 Claude Code、Cursor、Codex 以及 70+ 种 agent;它以 symlink
+方式安装每个 skill,因此更新仓库即可自动同步。
 
 | Agent | 配置格式 | 安装 |
 | --- | --- | --- |
@@ -371,6 +402,7 @@ cmd/mysql-cli/main  ->  cli   (cobra 装配 + 退出码映射)
 | `format` | `result` -> json/table/csv/tsv |
 | `cli` | cobra 子命令 + `mapError`(error -> 退出码) |
 | `repl` | readline 交互壳,供人类调试 |
+| `agentsetup` | per-agent 写操作确认配置(模板内嵌于二进制) |
 
 ## 致谢
 
