@@ -2,8 +2,16 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-12
+
 ### Added
 - `mysql-cli agent init` 新增 Pi（pi.dev）支持:走 Pi 的 `tool_call` 事件扩展机制（in-process TypeScript，非 command-type hook，不 exec 子进程），matcher=`bash`（小写），决策对象 `{ block: true, reason? }`，人机确认靠扩展内 `ctx.ui.confirm()`。项目级写入 `.pi/extensions/mysql-write-guard.ts`（首次启动 pi 需 `/trust`），全局写入 `~/.pi/agent/extensions/mysql-write-guard.ts`（立即可用）；装好后在 pi 内 `/reload` 生效。**不复用 `mysql-write-guard.py`**——单独维护 `templates/pi-mysql-write-guard.ts`，把 shlex token + 正则回退检测逻辑以 TS 重写；非交互模式下 `ctx.ui` 不可用时默认 block（保守）。
+- 退出码契约:新增 `11=internal`,连接/配置失败改用哨兵 error + `errors.Is` 精确映射;写路径与 schema 命令支持 `--timeout`。
+
+### Fixed
+- `install.sh`/`install.ps1`:改用 `checksums.txt` 校验下载完整性(原 per-asset `.sha256` 下载永远 404,校验从未生效)。
+- SSH 隧道:拒绝权限过宽的私钥(须 0600 或更严);修复 long-running 下 proxy goroutine 泄漏(双向拷贝加 5s 宽限)。
+- 写路径 `%w: %w` 双包装,DDL/destructive 的退出码不再被误判为 readonly(3)。
 
 ## [2.0.2] - 2026-08-06
 
