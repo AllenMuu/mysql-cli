@@ -37,8 +37,17 @@ func TestQueryConnectionFailure(t *testing.T) {
 }
 
 func TestTxnConnectionFailure(t *testing.T) {
-	code := Run([]string{"txn", "SELECT 1", "--host", "127.0.0.1", "--port", "1"})
+	// txn 现在在连接前做 readonly/multi-statement 预检（对齐 query 子命令）。
+	// 要测"连接失败"路径，必须传 --write 让预检放行，才会真正尝试 openPool。
+	code := Run([]string{"txn", "SELECT 1", "--write", "--host", "127.0.0.1", "--port", "1"})
 	assert.Equal(t, ExitConnFailed, code)
+}
+
+// TestTxnReadonlyPrecheck 验证 P1-#10：无 --write 的 txn 在连接前预检阶段即返回 readonly，
+// 不消耗连接（对齐 query 子命令的预检行为）。
+func TestTxnReadonlyPrecheck(t *testing.T) {
+	code := Run([]string{"txn", "SELECT 1", "--host", "127.0.0.1", "--port", "1"})
+	assert.Equal(t, ExitReadonlyViolation, code)
 }
 
 func TestInvalidFormatErrors(t *testing.T) {
@@ -49,6 +58,20 @@ func TestInvalidFormatErrors(t *testing.T) {
 func TestInvalidTimeoutErrors(t *testing.T) {
 	code := Run([]string{"query", "SELECT 1", "--timeout", "abc"})
 	assert.Equal(t, ExitConfigError, code)
+}
+
+// TestNegativeLimitErrors（任务 3）：--limit 负数在 PersistentPreRunE 即被拒，
+// 返回 exit 10（ExitConfigError），不进入查询路径。
+func TestNegativeLimitErrors(t *testing.T) {
+	code := Run([]string{"query", "SELECT 1", "--limit", "-5"})
+	assert.Equal(t, ExitConfigError, code)
+}
+
+// TestLargeLimitWarnsButRuns：超大 limit（>1_000_000）给 stderr 警告但不拒绝，
+// 仍继续执行（这里因连接失败落到 exit 2，证明校验放行）。
+func TestLargeLimitWarnsButRuns(t *testing.T) {
+	code := Run([]string{"query", "SELECT 1", "--limit", "2000000", "--host", "127.0.0.1", "--port", "1"})
+	assert.Equal(t, ExitConnFailed, code)
 }
 
 func TestSchemaCommandsFailOnConnection(t *testing.T) {

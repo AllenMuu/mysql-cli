@@ -13,11 +13,17 @@ on:
       - "scripts/skill-format-check.sh"
       - ".github/workflows/skill-format-check.yml"
 
+# 同一个分支上的 skill-checks 不要并发跑，新 push 取消旧 run。
+concurrency:
+  group: skill-checks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Validate SKILL.md frontmatter
         run: ./scripts/skill-format-check.sh skills/

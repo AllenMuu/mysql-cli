@@ -24,6 +24,9 @@ $Arch = switch ($env:PROCESSOR_ARCHITECTURE) {
 }
 $Archive = "mysql-cli_windows_$Arch.zip"
 $Url = "https://github.com/$Repo/releases/latest/download/$Archive"
+# GoReleaser 生成单一 checksums.txt（每个资产行：<hash>  <asset_name>），不生成
+# per-asset .sha256 文件。原代码尝试下载 $Url.sha256 永远 404，校验从未生效。
+$ChecksumsUrl = "https://github.com/$Repo/releases/latest/download/checksums.txt"
 $Tmp = Join-Path ([IO.Path]::GetTempPath()) ("mysql-cli-" + [guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Force -Path $Tmp | Out-Null
 try {
@@ -33,6 +36,41 @@ try {
 		Err "download failed: $Url"
 		Err "alternative: go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest"
 		exit 1
+	}
+	# 下载 checksums.txt；404（旧 release 没上传）则只警告继续，向后兼容。
+	$ArchivePath = Join-Path $Tmp $Archive
+	$ChecksumsPath = Join-Path $Tmp "checksums.txt"
+	$hasChecksums = $true
+	try {
+		Invoke-WebRequest -Uri $ChecksumsUrl -OutFile $ChecksumsPath -UseBasicParsing
+	} catch {
+		$hasChecksums = $false
+		Warn "WARNING: no checksums.txt available, cannot verify integrity"
+	}
+	if ($hasChecksums) {
+		# 从 checksums.txt 中查找当前资产对应行的首列 hash。
+		# checksums.txt 格式：<hash>  <asset_name>（两列以空白分隔）。
+		$expected = $null
+		foreach ($line in Get-Content $ChecksumsPath) {
+			$parts = $line -split '\s+'
+			if ($parts.Length -ge 2 -and $parts[1] -eq $Archive) {
+				$expected = $parts[0]
+				break
+			}
+		}
+		if (-not $expected) {
+			Warn "checksums.txt found but no entry for $Archive; cannot verify integrity"
+		} else {
+			$actual = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash.ToLower()
+			if ($actual -ne $expected.ToLower()) {
+				Err "checksum mismatch, possible download corruption"
+				Err "expected: $expected"
+				Err "actual:   $actual"
+				exit 1
+			} else {
+				Ok "checksum verified"
+			}
+		}
 	}
 	Expand-Archive -Path (Join-Path $Tmp $Archive) -DestinationPath $Tmp -Force
 	New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null

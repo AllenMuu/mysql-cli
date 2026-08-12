@@ -25,31 +25,7 @@ func queryRows(ctx context.Context, pool *conn.Pool, sqlText string) (result.Res
 		return result.Empty(), fmt.Errorf("query: %w", err)
 	}
 	defer rows.Close()
-	cols, err := rows.Columns()
-	if err != nil {
-		return result.Empty(), err
-	}
-	res := result.Result{Columns: cols}
-	for rows.Next() {
-		vals := make([]any, len(cols))
-		ptrs := make([]any, len(cols))
-		for i := range vals {
-			ptrs[i] = &vals[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			return result.Empty(), err
-		}
-		for i, v := range vals {
-			if b, ok := v.([]byte); ok {
-				vals[i] = string(b)
-			}
-		}
-		res.Rows = append(res.Rows, vals)
-	}
-	if err := rows.Err(); err != nil {
-		return result.Empty(), err
-	}
-	return res, nil
+	return result.ScanRows(rows)
 }
 
 // Databases lists non-system databases.
@@ -71,14 +47,27 @@ func Databases(ctx context.Context, pool *conn.Pool) (result.Result, error) {
 }
 
 // Tables lists tables in db (or the current database if db is empty).
+//
+// db 是用户输入（CLI 参数），必须经 safety.ValidateIdentifier 白名单校验防注入。
+// 对于来自 MySQL 自身返回的库名（如 Explore 从 SHOW DATABASES 拿到），调用方
+// 应改用 tablesInDB（反引号包裹即足够安全）——因为 MySQL 允许 `my-app`、`my.db`
+// 等含特殊字符的库名，白名单会拒绝它们导致 Explore 失败。
 func Tables(ctx context.Context, pool *conn.Pool, db string) (result.Result, error) {
 	if db != "" {
 		if err := safety.ValidateIdentifier(db); err != nil {
 			return result.Empty(), err
 		}
-		return queryRows(ctx, pool, fmt.Sprintf("SHOW TABLES FROM `%s`", db))
+		return tablesInDB(ctx, pool, db)
 	}
 	return queryRows(ctx, pool, "SHOW TABLES")
+}
+
+// tablesInDB 用反引号包裹 db 后执行 SHOW TABLES FROM `<db>`。
+// 调用方必须保证 db 来自可信来源（如 MySQL 自身返回的库名），不可用于用户输入。
+// 反引号包裹已足够防 SQL 注入；db 中的反引号字符本身（罕见）会被 MySQL 视为
+// 标识符边界，但仍不会导致注入（标识符上下文里没有可执行的语句）。
+func tablesInDB(ctx context.Context, pool *conn.Pool, db string) (result.Result, error) {
+	return queryRows(ctx, pool, fmt.Sprintf("SHOW TABLES FROM `%s`", db))
 }
 
 // Schema returns column metadata for one table, or all tables when table is empty.

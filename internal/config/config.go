@@ -16,14 +16,18 @@ import (
 
 // SSHConfig mirrors the original MCP's MYSQL_SSH_* options.
 type SSHConfig struct {
-	Enable     bool
-	Host       string
-	Port       int
-	User       string
-	KeyPath    string
-	RemoteHost string
-	RemotePort int
-	LocalPort  int
+	Enable                bool
+	Host                  string
+	Port                  int
+	User                  string
+	KeyPath               string
+	RemoteHost            string
+	RemotePort            int
+	LocalPort             int
+	// KnownHostsFile 是 known_hosts 文件路径；空表示用默认 ~/.ssh/known_hosts。
+	KnownHostsFile string
+	// InsecureIgnoreHostKey=true 时跳过 host key 校验（MITM 风险，仅调试用）。
+	InsecureIgnoreHostKey bool
 }
 
 // Datasource is a single MySQL connection target.
@@ -73,14 +77,16 @@ type fileDatasource struct {
 }
 
 type fileSSH struct {
-	Enable     bool   `toml:"enable"`
-	Host       string `toml:"host"`
-	Port       int    `toml:"port"`
-	User       string `toml:"user"`
-	KeyPath    string `toml:"key_path"`
-	RemoteHost string `toml:"remote_host"`
-	RemotePort int    `toml:"remote_port"`
-	LocalPort  int    `toml:"local_port"`
+	Enable                bool   `toml:"enable"`
+	Host                  string `toml:"host"`
+	Port                  int    `toml:"port"`
+	User                  string `toml:"user"`
+	KeyPath               string `toml:"key_path"`
+	RemoteHost            string `toml:"remote_host"`
+	RemotePort            int    `toml:"remote_port"`
+	LocalPort             int    `toml:"local_port"`
+	KnownHostsFile        string `toml:"known_hosts_file"`
+	InsecureIgnoreHostKey bool   `toml:"insecure_ignore_host_key"`
 }
 
 var placeholderRe = regexp.MustCompile(`^\$\{([A-Z_][A-Z0-9_]*)\}$`)
@@ -89,7 +95,8 @@ var placeholderRe = regexp.MustCompile(`^\$\{([A-Z_][A-Z0-9_]*)\}$`)
 func LoadFile(path string) (*Config, error) {
 	var fc fileConfig
 	if _, err := toml.DecodeFile(path, &fc); err != nil {
-		return nil, err
+		// 双 %w 保链：cli 层 errors.Is(err, ErrConfig) 命中 ExitConfigError。
+		return nil, fmt.Errorf("%w: %w", ErrConfig, err)
 	}
 	cfg := &Config{DefaultDatasource: fc.Default, DefaultLimit: fc.DefaultLimit, Datasources: map[string]Datasource{}}
 	for name, fd := range fc.Datasources {
@@ -110,6 +117,7 @@ func fileToDatasource(fd fileDatasource) Datasource {
 			Enable: fd.SSH.Enable, Host: fd.SSH.Host, Port: fd.SSH.Port,
 			User: fd.SSH.User, KeyPath: fd.SSH.KeyPath, RemoteHost: fd.SSH.RemoteHost,
 			RemotePort: fd.SSH.RemotePort, LocalPort: fd.SSH.LocalPort,
+			KnownHostsFile: fd.SSH.KnownHostsFile, InsecureIgnoreHostKey: fd.SSH.InsecureIgnoreHostKey,
 		}
 	}
 	return ds
@@ -124,7 +132,8 @@ func expandPassword(pw string) (string, error) {
 	if v, ok := os.LookupEnv(m[1]); ok {
 		return v, nil
 	}
-	return "", fmt.Errorf("%w: %s", ErrPlaceholderUnset, m[1])
+	// 双 %w：保留 ErrPlaceholderUnset 细粒度，同时挂 ErrConfig 总哨兵。
+	return "", fmt.Errorf("%w: %w: %s", ErrConfig, ErrPlaceholderUnset, m[1])
 }
 
 // FromEnv returns a datasource from env vars (with defaults). Used for pure-env mode.
@@ -158,7 +167,7 @@ func fileBase(cfg *Config, name string) (Datasource, error) {
 	}
 	if name != "" {
 		if cfg == nil {
-			return Datasource{}, fmt.Errorf("%w: %s", ErrUnknownDatasource, name)
+			return Datasource{}, fmt.Errorf("%w: %w: %s", ErrConfig, ErrUnknownDatasource, name)
 		}
 		if ds, ok := cfg.Datasources[name]; ok {
 			pw, err := expandPassword(ds.Password)
@@ -168,7 +177,7 @@ func fileBase(cfg *Config, name string) (Datasource, error) {
 			ds.Password = pw
 			return ds, nil
 		}
-		return Datasource{}, fmt.Errorf("%w: %s", ErrUnknownDatasource, name)
+		return Datasource{}, fmt.Errorf("%w: %w: %s", ErrConfig, ErrUnknownDatasource, name)
 	}
 	return Datasource{}, nil
 }
@@ -181,7 +190,10 @@ func applyEnv(ds Datasource) (Datasource, error) {
 	if v, ok := os.LookupEnv("MYSQL_PORT"); ok {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			return Datasource{}, fmt.Errorf("invalid MYSQL_PORT %q: %w", v, err)
+			return Datasource{}, fmt.Errorf("%w: invalid MYSQL_PORT %q: %w", ErrConfig, v, err)
+		}
+		if n < 1 || n > 65535 {
+			return Datasource{}, fmt.Errorf("%w: invalid MYSQL_PORT %q: must be in [1,65535]", ErrConfig, v)
 		}
 		ds.Port = n
 	}
@@ -203,7 +215,10 @@ func applyEnv(ds Datasource) (Datasource, error) {
 	if v, ok := os.LookupEnv("MYSQL_CONNECT_TIMEOUT"); ok {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			return Datasource{}, fmt.Errorf("invalid MYSQL_CONNECT_TIMEOUT %q: %w", v, err)
+			return Datasource{}, fmt.Errorf("%w: invalid MYSQL_CONNECT_TIMEOUT %q: %w", ErrConfig, v, err)
+		}
+		if n <= 0 {
+			return Datasource{}, fmt.Errorf("%w: invalid MYSQL_CONNECT_TIMEOUT %q: must be > 0", ErrConfig, v)
 		}
 		ds.ConnectTimeout = n
 	}
@@ -219,10 +234,40 @@ func applyEnv(ds Datasource) (Datasource, error) {
 	if v, ok := os.LookupEnv("MYSQL_AUTH_PLUGIN"); ok {
 		ds.AuthPlugin = v
 	}
+	// SSH 相关 env：仅覆盖字段；若 ds.SSH 仍为 nil 但设置了任一 SSH env，则创建。
+	if v, ok := os.LookupEnv("MYSQL_SSH_INSECURE_IGNORE_HOST_KEY"); ok {
+		if ds.SSH == nil {
+			ds.SSH = &SSHConfig{}
+		}
+		switch v {
+		case "1", "true", "TRUE", "True", "yes", "YES":
+			ds.SSH.InsecureIgnoreHostKey = true
+		case "0", "false", "FALSE", "False", "no", "NO", "":
+			ds.SSH.InsecureIgnoreHostKey = false
+		default:
+			return Datasource{}, fmt.Errorf("%w: invalid MYSQL_SSH_INSECURE_IGNORE_HOST_KEY %q", ErrConfig, v)
+		}
+	}
+	if v, ok := os.LookupEnv("MYSQL_SSH_KNOWN_HOSTS_FILE"); ok {
+		if ds.SSH == nil {
+			ds.SSH = &SSHConfig{}
+		}
+		ds.SSH.KnownHostsFile = v
+	}
 	return ds, nil
 }
 
 // applyDefaults fills defaults for still-zero fields.
+//
+// 此函数是 Datasource 默认值的唯一真相源；conn.DSN() 和其他消费者信任入参已默认化，
+// 不再各自硬编码 fallback。当前 conn.DSN() 依赖的字段及其默认值：
+//   - Host    -> "localhost"
+//   - Port    -> 3306
+//   - ConnectTimeout -> 10（秒，>0）
+//   - Charset -> "utf8mb4"
+//   - SQLMode -> "TRADITIONAL"
+// 其余字段（Collation/SSLMode/SSLCA/AuthPlugin 等）留空表示"未设置"，
+// conn.DSN() 在为空时跳过对应参数，故无需在此强加默认值。
 func applyDefaults(ds Datasource) Datasource {
 	if ds.Host == "" {
 		ds.Host = "localhost"
@@ -238,6 +283,12 @@ func applyDefaults(ds Datasource) Datasource {
 	}
 	if ds.Charset == "" {
 		ds.Charset = "utf8mb4"
+	}
+	// SSH 默认值：KnownHostsFile 空时回落 ~/.ssh/known_hosts（展开 home 目录）。
+	if ds.SSH != nil && ds.SSH.KnownHostsFile == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			ds.SSH.KnownHostsFile = home + "/.ssh/known_hosts"
+		}
 	}
 	return ds
 }
@@ -292,3 +343,9 @@ var ErrUnknownDatasource = errors.New("unknown datasource")
 
 // ErrPlaceholderUnset is returned when a password ${ENV} placeholder references an unset env var.
 var ErrPlaceholderUnset = errors.New("placeholder env var unset")
+
+// ErrConfig 哨兵 error：config 解析/加载失败统一挂它，cli 层 mapError
+// 用 errors.Is 精确命中 ExitConfigError，取代兜底的字符串匹配。
+// 已有的 ErrUnknownDatasource / ErrPlaceholderUnset 仍保留，作为更细粒度的
+// 子哨兵；这里只追加一个总哨兵，不改既有解析逻辑。
+var ErrConfig = errors.New("config: invalid")

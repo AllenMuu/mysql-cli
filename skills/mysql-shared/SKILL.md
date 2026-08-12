@@ -190,8 +190,9 @@ correct code without touching the database.
 | `8` | `SQL_ERROR` | SQL syntax/semantic error | Run `mysql-cli schema <table>` to confirm columns/types, then fix the SQL. |
 | `9` | `QUERY_TIMEOUT` | Exceeded `--timeout` | Raise `--timeout 60s`, add `--limit`, or narrow the `WHERE`. |
 | `10` | `CONFIG_ERROR` | Config parse error or unknown datasource | Check `config.toml` TOML syntax, the `default` value, and datasource name spelling; point `--config` at the right file. |
+| `11` | `INTERNAL_ERROR` | Internal panic / unexpected error | Retry once; if it persists, file a bug with the command, `config.toml` (passwords redacted), and stderr. Not recoverable via flag changes. |
 
-Exit `1` is reserved for argument/flag usage errors (cobra); fix the command line.
+Cobra flag/usage errors (e.g. `--bogus`) have no sentinel match in `mapError` and fall through to `CONFIG_ERROR` (exit `10`); exit `1` is no longer separately reserved.
 
 ---
 

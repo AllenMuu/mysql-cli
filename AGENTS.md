@@ -55,9 +55,9 @@ cmd/mysql-cli/main  ->  cli（cobra 装配 + 退出码映射 + config 子命令�
 
 **SQL 读值必须转字符串**：驱动对文本列返回 `[]byte`，`query.go` 和 `schema.go` 的扫描循环都把 `[]byte` 转成 `string`，否则 JSON 输出会变成 base64。新增扫描路径时照搬此转换。
 
-**退出码是契约**：`cli` 层的 `Exit*` 常量（2=conn, 3=readonly, 4=ddl-needs-write, 5=destructive-needs-yes, 6=identifier, 7=multi-statement, 8=sql, 9=timeout, 10=config）面向 agent，不可随意改动。`mapError` 按 `errors.Is` 识别 `safety.*` / `query.*` 哨兵 error，连接/配置失败靠 `err.Error()` 字符串匹配兜底。新增 error 类型时挂到对应哨兵（`fmt.Errorf("%w: %v", ErrGuard, err)`）。
+**退出码是契约**：`cli` 层的 `Exit*` 常量（2=conn, 3=readonly, 4=ddl-needs-write, 5=destructive-needs-yes, 6=identifier, 7=multi-statement, 8=sql, 9=timeout, 10=config, 11=internal-panic）面向 agent，不可随意改动。`mapError` 按 `errors.Is` 识别 `safety.*` / `query.*` 哨兵 error，连接/配置失败靠 `err.Error()` 字符串匹配兜底。新增 error 类型时挂到对应哨兵（`fmt.Errorf("%w: %w", ErrGuard, err)`）。**注意：Go 1.20+ 支持多个 `%w`，内层 error 必须用 `%w` 包装才能被 `errors.Is` 识别；用 `%v` 会字符串化切断链，导致 `mapError` 无法命中内层哨兵 error（曾为 P0 bug）。**
 
-**SSH 隧道生命周期**：`conn.openWithTunnelHook` 建隧道后把 `closer` 存进 `Pool`，`Pool.Close` 必须先关隧道再关 DB。`tunnelHook` 是可测试的注入点（`ssh_test.go` 替换它，避免真连 SSH）。
+**SSH 隧道生命周期**：`conn.openWithTunnelHook` 建隧道后把 `closer` 存进 `Pool`，`Pool.Close` 必须先关隧道再关 DB。`tunnelHook` 是可测试的注入点（`ssh_test.go` 替换它，避免真连 SSH）。默认要求 known_hosts 校验（`~/.ssh/known_hosts`），`ssh.insecure_ignore_host_key=true` 可禁用但会 stderr 告警 MITM 风险。
 
 **多语句拒绝**：`safety.HasMultiStatement` 容忍单个结尾分号，但拒绝中间分号；多语句必须走 `txn` 子命令。闸门检查在 `query` 里、也在 `cli` 层连接前预检（让 readonly/multi-statement 在不连库时就返回正确退出码）。
 
@@ -87,5 +87,5 @@ mysql-cli 的 skill 不再自研安装,而是接入 [vercel-labs/skills](https:/
 `--write`/`--ddl`/`--yes` 是 AI 自传的 flag,CLI 内部无人类确认环节。`mysql-cli agent init` 为各 agent 安装配置,在写操作执行前弹窗找人类确认(命中 `--write`/`--ddl`/`--yes` 即拦,只读放行)。
 
 - **命令**:`mysql-cli agent init`(交互式选 agent + 层级);非交互 `mysql-cli agent init --agents claude,opencode,copilot --project`。
-- **支持**:claude / cursor / opencode / copilot / codebuddy / trae。不含 Codex(hook 未坐实)。
+- **支持**:claude / cursor / opencode / copilot / codebuddy / trae / pi。不含 Codex(hook 未坐实)。
 - **实现**:配置模板内嵌于二进制 `internal/agentsetup/templates/`;合并类配置(settings.json/opencode.json/.vscode/settings.json)深合并进现有文件并备份 `.bak`,幂等。详见 `docs/agent-integration.md`。

@@ -87,6 +87,36 @@ func TestResolveUnknownDatasource(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnknownDatasource)
 }
 
+// TestErrConfigSentinelWrapped（任务 2）：config 解析失败的各路径都应挂
+// ErrConfig 总哨兵，让 cli 层 mapError 用 errors.Is 精确命中 ExitConfigError。
+// 同时保留 ErrUnknownDatasource / ErrPlaceholderUnset 细粒度子哨兵。
+func TestErrConfigSentinelWrapped(t *testing.T) {
+	// 1) unknown datasource 路径：同时挂 ErrConfig 和 ErrUnknownDatasource。
+	cfg, _ := LoadFile(writeTmp(t, ``))
+	_, err := Resolve(cfg, "nope", Datasource{})
+	assert.ErrorIs(t, err, ErrConfig)
+	assert.ErrorIs(t, err, ErrUnknownDatasource)
+
+	// 2) placeholder unset 路径：同时挂 ErrConfig 和 ErrPlaceholderUnset。
+	cfg2, _ := LoadFile(writeTmp(t, `
+[datasource.dev]
+host = "db"
+password = "${MISSING_VAR}"
+`))
+	_, err = Resolve(cfg2, "dev", Datasource{})
+	assert.ErrorIs(t, err, ErrConfig)
+	assert.ErrorIs(t, err, ErrPlaceholderUnset)
+
+	// 3) LoadFile toml 解析失败路径：挂 ErrConfig。
+	_, err = LoadFile("/no/such/file.toml")
+	assert.ErrorIs(t, err, ErrConfig)
+
+	// 4) applyEnv MYSQL_PORT 非法路径：挂 ErrConfig。
+	t.Setenv("MYSQL_PORT", "abc")
+	_, err = Resolve(nil, "", Datasource{})
+	assert.ErrorIs(t, err, ErrConfig)
+}
+
 func TestEnvOverridesFile(t *testing.T) {
 	cfg, _ := LoadFile(writeTmp(t, `
 [datasource.dev]
@@ -163,11 +193,69 @@ func TestEnvInvalidPortErrors(t *testing.T) {
 	assert.ErrorContains(t, err, "invalid MYSQL_PORT")
 }
 
+func TestEnvPortOutOfRange(t *testing.T) {
+	t.Run("zero", func(t *testing.T) {
+		t.Setenv("MYSQL_PORT", "0")
+		_, err := Resolve(nil, "", Datasource{})
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "invalid MYSQL_PORT")
+		assert.ErrorContains(t, err, "[1,65535]")
+	})
+	t.Run("negative", func(t *testing.T) {
+		t.Setenv("MYSQL_PORT", "-1")
+		_, err := Resolve(nil, "", Datasource{})
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "invalid MYSQL_PORT")
+	})
+	t.Run("too_large", func(t *testing.T) {
+		t.Setenv("MYSQL_PORT", "70000")
+		_, err := Resolve(nil, "", Datasource{})
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "invalid MYSQL_PORT")
+	})
+}
+
+func TestEnvPortValid(t *testing.T) {
+	t.Setenv("MYSQL_PORT", "3306")
+	ds, err := Resolve(nil, "", Datasource{})
+	assert.NoError(t, err)
+	assert.Equal(t, 3306, ds.Port)
+}
+
 func TestEnvInvalidConnectTimeoutErrors(t *testing.T) {
 	t.Setenv("MYSQL_CONNECT_TIMEOUT", "xyz")
 	_, err := Resolve(nil, "", Datasource{})
 	assert.ErrorIs(t, err, strconv.ErrSyntax)
 	assert.ErrorContains(t, err, "invalid MYSQL_CONNECT_TIMEOUT")
+}
+
+func TestEnvConnectTimeoutNonPositive(t *testing.T) {
+	t.Run("zero", func(t *testing.T) {
+		t.Setenv("MYSQL_CONNECT_TIMEOUT", "0")
+		_, err := Resolve(nil, "", Datasource{})
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "invalid MYSQL_CONNECT_TIMEOUT")
+		assert.ErrorContains(t, err, "must be > 0")
+	})
+	t.Run("negative", func(t *testing.T) {
+		t.Setenv("MYSQL_CONNECT_TIMEOUT", "-5")
+		_, err := Resolve(nil, "", Datasource{})
+		assert.Error(t, err)
+		assert.ErrorContains(t, err, "invalid MYSQL_CONNECT_TIMEOUT")
+	})
+}
+
+// TestApplyDefaultsCoversConnDeps 验证 applyDefaults 覆盖 conn.DSN() 依赖的所有字段。
+// 详见 applyDefaults 注释里"唯一真相源"契约。
+func TestApplyDefaultsCoversConnDeps(t *testing.T) {
+	ds := applyDefaults(Datasource{})
+	// Host/Port/ConnectTimeout/Charset/SQLMode 必须有合理默认值。
+	assert.NotEmpty(t, ds.Host, "Host 必须有默认值")
+	assert.Greater(t, ds.Port, 0, "Port 必须有正默认值")
+	assert.LessOrEqual(t, ds.Port, 65535, "Port 默认值必须在合法范围")
+	assert.Greater(t, ds.ConnectTimeout, 0, "ConnectTimeout 必须有正默认值")
+	assert.NotEmpty(t, ds.Charset, "Charset 必须有默认值")
+	assert.NotEmpty(t, ds.SQLMode, "SQLMode 必须有默认值")
 }
 
 func writeTmp(t *testing.T, content string) string {
@@ -207,4 +295,70 @@ host = "127.0.0.1"
 	cfg, err := LoadFile(tmp)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, cfg.DefaultLimit)
+}
+
+func TestSSHHostKeyFieldsFromToml(t *testing.T) {
+	toml := `
+[datasource.bastion]
+host = "db"
+[datasource.bastion.ssh]
+enable = true
+host = "bastion"
+known_hosts_file = "/tmp/known_hosts"
+insecure_ignore_host_key = true
+`
+	tmp := t.TempDir() + "/config.toml"
+	assert.NoError(t, os.WriteFile(tmp, []byte(toml), 0644))
+	cfg, err := LoadFile(tmp)
+	assert.NoError(t, err)
+	ssh := cfg.Datasources["bastion"].SSH
+	assert.NotNil(t, ssh)
+	assert.Equal(t, "/tmp/known_hosts", ssh.KnownHostsFile)
+	assert.True(t, ssh.InsecureIgnoreHostKey)
+}
+
+func TestSSHInsecureIgnoreHostKeyEnv(t *testing.T) {
+	t.Setenv("MYSQL_SSH_INSECURE_IGNORE_HOST_KEY", "true")
+	ds, err := FromEnv()
+	assert.NoError(t, err)
+	assert.NotNil(t, ds.SSH)
+	assert.True(t, ds.SSH.InsecureIgnoreHostKey)
+}
+
+func TestSSHInsecureIgnoreHostKeyEnvInvalid(t *testing.T) {
+	t.Setenv("MYSQL_SSH_INSECURE_IGNORE_HOST_KEY", "maybe")
+	_, err := FromEnv()
+	assert.Error(t, err)
+	assert.ErrorContains(t, err, "invalid MYSQL_SSH_INSECURE_IGNORE_HOST_KEY")
+}
+
+func TestSSHKnownHostsFileEnv(t *testing.T) {
+	t.Setenv("MYSQL_SSH_KNOWN_HOSTS_FILE", "/custom/known_hosts")
+	ds, err := FromEnv()
+	assert.NoError(t, err)
+	assert.NotNil(t, ds.SSH)
+	assert.Equal(t, "/custom/known_hosts", ds.SSH.KnownHostsFile)
+}
+
+func TestSSHKnownHostsFileDefaultApplied(t *testing.T) {
+	// SSH 非 nil 且 KnownHostsFile 空 -> 默认 ~/.ssh/known_hosts
+	ds := Datasource{SSH: &SSHConfig{Enable: true}}
+	out := applyDefaults(ds)
+	assert.NotEmpty(t, out.SSH.KnownHostsFile)
+	assert.Contains(t, out.SSH.KnownHostsFile, "/.ssh/known_hosts")
+	assert.False(t, out.SSH.InsecureIgnoreHostKey) // 默认 false
+}
+
+func TestSSHKnownHostsFileDefaultNotAppliedWhenNil(t *testing.T) {
+	// SSH 为 nil 不应被默认值创建
+	ds := applyDefaults(Datasource{})
+	assert.Nil(t, ds.SSH)
+}
+
+func TestSSHKnownHostsFileEnvPreservedThroughDefaults(t *testing.T) {
+	// 用户显式指定的 KnownHostsFile 不被默认覆盖
+	t.Setenv("MYSQL_SSH_KNOWN_HOSTS_FILE", "/explicit/known_hosts")
+	ds, err := FromEnv()
+	assert.NoError(t, err)
+	assert.Equal(t, "/explicit/known_hosts", ds.SSH.KnownHostsFile)
 }

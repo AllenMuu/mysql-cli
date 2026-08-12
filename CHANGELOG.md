@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `mysql-cli agent init` 新增 Pi（pi.dev）支持:走 Pi 的 `tool_call` 事件扩展机制（in-process TypeScript，非 command-type hook，不 exec 子进程），matcher=`bash`（小写），决策对象 `{ block: true, reason? }`，人机确认靠扩展内 `ctx.ui.confirm()`。项目级写入 `.pi/extensions/mysql-write-guard.ts`（首次启动 pi 需 `/trust`），全局写入 `~/.pi/agent/extensions/mysql-write-guard.ts`（立即可用）；装好后在 pi 内 `/reload` 生效。**不复用 `mysql-write-guard.py`**——单独维护 `templates/pi-mysql-write-guard.ts`，把 shlex token + 正则回退检测逻辑以 TS 重写；非交互模式下 `ctx.ui` 不可用时默认 block（保守）。
+
 ## [2.0.2] - 2026-08-06
 
 ### Added

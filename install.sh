@@ -33,11 +33,40 @@ case "$OS" in
 esac
 ARCHIVE="mysql-cli_${OS}_${ARCH}.${EXT}"
 URL="https://github.com/${REPO}/releases/latest/download/${ARCHIVE}"
+# GoReleaser 生成单一 checksums.txt（每个资产行：<hash>  <asset_name>），不生成
+# per-asset .sha256 文件。原代码尝试下载 ${URL}.sha256 永远 404，校验从未生效。
+CHECKSUMS_URL="https://github.com/${REPO}/releases/latest/download/checksums.txt"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 if ! curl -fsSL "$URL" -o "$TMP/$ARCHIVE"; then
 	c_err "download failed: $URL"
 	c_err "alternative: go install github.com/AllenMuu/mysql-cli/cmd/mysql-cli@latest"
 	exit 1
+fi
+# 下载 checksums.txt；404（旧 release 没上传）则只警告继续，向后兼容。
+if curl -fsSL "$CHECKSUMS_URL" -o "$TMP/checksums.txt"; then
+	# 从 checksums.txt 中提取当前资产对应行的首列 hash。
+	expected=$(awk -v want="$ARCHIVE" '$2 == want {print $1; exit}' "$TMP/checksums.txt")
+	if [ -n "$expected" ]; then
+		# 在 TMP 目录内执行校验，让相对路径匹配归档文件名。
+		actual=$(cd "$TMP" && command -v sha256sum >/dev/null 2>&1 && sha256sum "$ARCHIVE" | awk '{print $1}')
+		if [ -z "$actual" ] && command -v shasum >/dev/null 2>&1; then
+			actual=$(cd "$TMP" && shasum -a 256 "$ARCHIVE" | awk '{print $1}')
+		fi
+		if [ -z "$actual" ]; then
+			c_warn "no sha256sum/shasum tool found; skipping integrity check"
+		elif [ "$actual" != "$expected" ]; then
+			c_err "checksum mismatch, possible download corruption"
+			c_err "expected: $expected"
+			c_err "actual:   $actual"
+			exit 1
+		else
+			c_ok "checksum verified"
+		fi
+	else
+		c_warn "checksums.txt found but no entry for $ARCHIVE; cannot verify integrity"
+	fi
+else
+	c_warn "WARNING: no checksums.txt available, cannot verify integrity"
 fi
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
 mkdir -p "$INSTALL_DIR"

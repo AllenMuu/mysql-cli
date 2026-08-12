@@ -23,6 +23,11 @@ type Config struct {
 	Opts   query.Options
 	Out    io.Writer
 	Format string
+
+	// DefaultCap 是 REPL 下 SELECT 的默认行数上限（与 CLI 子命令行为对齐）。
+	// 0 表示不应用默认 cap（保持原行为，仅供测试或显式不限制时使用）。
+	// 由调用方（cli）填入 cli.Globals.defaultCap() 的结果。
+	DefaultCap int
 }
 
 const exitCode = -1
@@ -80,7 +85,16 @@ func runSQL(cfg Config, sqlText string) {
 	var err error
 	switch safety.Classify(sqlText) {
 	case safety.CategoryRead, safety.CategoryUnknown:
-		r, err = query.Execute(ctx, cfg.Pool, sqlText, cfg.Opts)
+		// 与 CLI 子命令行为对齐：未显式指定 limit 时应用默认 cap 并开启 cap+1
+		// 探测，避免 REPL 里 `SELECT * FROM huge_table` 拉全表。
+		// 仅当 Opts.Limit==0 且 Probe==false（即调用方未设置）时填默认值；
+		// 调用方显式传 Opts.Limit>0 或 Opts.Probe=true 时不覆盖。
+		opts := cfg.Opts
+		if opts.Limit == 0 && !opts.Probe && cfg.DefaultCap > 0 {
+			opts.Limit = cfg.DefaultCap
+			opts.Probe = true
+		}
+		r, err = query.Execute(ctx, cfg.Pool, sqlText, opts)
 	default:
 		r, err = query.ExecuteWrite(ctx, cfg.Pool, sqlText, cfg.Opts)
 	}
@@ -133,23 +147,12 @@ func runSlash(cfg Config, fn func(*conn.Pool) (result.Result, error)) (int, stri
 	return 0, strings.TrimSpace(out)
 }
 
+// looksLikeSQL 判断输入是否像 SQL。直接复用 safety.Classify，避免与 safety
+// 的前缀表（read/dml/ddl）重复维护导致漂移。注意：WITH 开头的 CTE 语句在
+// safety 中被保守归入 CategoryUnknown，因此这里也不认为它"像 SQL"，由
+// runOnce 走非 SQL 分支处理。
 func looksLikeSQL(s string) bool {
-	fields := strings.Fields(s)
-	if len(fields) == 0 {
-		return false
-	}
-	w := strings.ToUpper(fields[0])
-	prefixes := []string{
-		"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN", "WITH",
-		"INSERT", "UPDATE", "DELETE", "REPLACE",
-		"CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME",
-	}
-	for _, p := range prefixes {
-		if w == p {
-			return true
-		}
-	}
-	return false
+	return safety.Classify(s) != safety.CategoryUnknown
 }
 
 func isExit(code int) bool { return code == exitCode }

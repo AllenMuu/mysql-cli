@@ -35,6 +35,19 @@ func explicitConfigFlag(g *Globals) string {
 	return ""
 }
 
+// mustGetHome returns the user's home directory or an error, centralizing
+// the os.UserHomeDir call and empty-check used by every config subcommand.
+func mustGetHome() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine home: %w", err)
+	}
+	if home == "" {
+		return "", errors.New("cannot determine home: $HOME is empty")
+	}
+	return home, nil
+}
+
 // newConfigPathCmd implements `config path`: prints the resolved config file
 // chain (explicit/global/project) with trust status, ordered low->high.
 // Text format: "<kind>: <path>   [trusted|untrusted, skipped|missing]".
@@ -45,12 +58,9 @@ func newConfigPathCmd(g *Globals) *cobra.Command {
 		Short: "Show the resolved config file chain and trust status",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			home, err := os.UserHomeDir()
+			home, err := mustGetHome()
 			if err != nil {
-				return fmt.Errorf("cannot determine home: %w", err)
-			}
-			if home == "" {
-				return errors.New("cannot determine home: $HOME is empty")
+				return err
 			}
 			cwd, _ := os.Getwd()
 			entries, err := config.ResolvePathChain(config.LoadOpts{
@@ -107,12 +117,9 @@ func newConfigTrustCmd(g *Globals) *cobra.Command {
 		Short: "Trust a project root so its .config/mysql-cli/config.toml is loaded",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			home, err := os.UserHomeDir()
+			home, err := mustGetHome()
 			if err != nil {
-				return fmt.Errorf("cannot determine home: %w", err)
-			}
-			if home == "" {
-				return errors.New("cannot determine home: $HOME is empty")
+				return err
 			}
 			dir := ""
 			if len(args) == 1 {
@@ -193,12 +200,9 @@ func newConfigShowCmd(g *Globals) *cobra.Command {
 		Short: "Show the merged effective config (passwords masked)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			home, err := os.UserHomeDir()
+			home, err := mustGetHome()
 			if err != nil {
-				return fmt.Errorf("cannot determine home: %w", err)
-			}
-			if home == "" {
-				return errors.New("cannot determine home: $HOME is empty")
+				return err
 			}
 			cwd, _ := os.Getwd()
 			merged, entries, err := config.Load(config.LoadOpts{
@@ -269,12 +273,9 @@ func newConfigInitCmd(g *Globals) *cobra.Command {
 			}
 			var target string
 			if global {
-				home, err := os.UserHomeDir()
+				home, err := mustGetHome()
 				if err != nil {
-					return fmt.Errorf("cannot determine home: %w", err)
-				}
-				if home == "" {
-					return errors.New("cannot determine home: $HOME is empty")
+					return err
 				}
 				target = filepath.Join(home, config.RelConfigPath)
 			} else {
@@ -375,19 +376,25 @@ func emitMaskedDS(w io.Writer, name string, ds config.Datasource, asJSON bool) {
 		fmt.Fprintf(w, "    remote_host: %s\n", m.SSH.RemoteHost)
 		fmt.Fprintf(w, "    remote_port: %d\n", m.SSH.RemotePort)
 		fmt.Fprintf(w, "    local_port: %d\n", m.SSH.LocalPort)
+		// known_hosts_file / insecure_ignore_host_key 影响 SSH host key 校验行为，
+		// 排查隧道连接问题时必须看到；之前漏掉会让用户无法判断是否走了 MITM 容忍路径。
+		fmt.Fprintf(w, "    known_hosts_file: %s\n", m.SSH.KnownHostsFile)
+		fmt.Fprintf(w, "    insecure_ignore_host_key: %t\n", m.SSH.InsecureIgnoreHostKey)
 	}
 }
 
 // maskedSSHJSON is the JSON view of config.SSHConfig (snake_case keys).
 type maskedSSHJSON struct {
-	Enable     bool   `json:"enable"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	User       string `json:"user"`
-	KeyPath    string `json:"key_path"`
-	RemoteHost string `json:"remote_host"`
-	RemotePort int    `json:"remote_port"`
-	LocalPort  int    `json:"local_port"`
+	Enable                bool   `json:"enable"`
+	Host                  string `json:"host"`
+	Port                  int    `json:"port"`
+	User                  string `json:"user"`
+	KeyPath               string `json:"key_path"`
+	RemoteHost            string `json:"remote_host"`
+	RemotePort            int    `json:"remote_port"`
+	LocalPort             int    `json:"local_port"`
+	KnownHostsFile        string `json:"known_hosts_file"`
+	InsecureIgnoreHostKey bool   `json:"insecure_ignore_host_key"`
 }
 
 // maskedDSJSON is the JSON view of a masked config.Datasource (snake_case keys,
@@ -417,6 +424,7 @@ func toMaskedDSJSON(m config.Datasource) maskedDSJSON {
 			Enable: m.SSH.Enable, Host: m.SSH.Host, Port: m.SSH.Port,
 			User: m.SSH.User, KeyPath: m.SSH.KeyPath, RemoteHost: m.SSH.RemoteHost,
 			RemotePort: m.SSH.RemotePort, LocalPort: m.SSH.LocalPort,
+			KnownHostsFile: m.SSH.KnownHostsFile, InsecureIgnoreHostKey: m.SSH.InsecureIgnoreHostKey,
 		}
 	}
 	return maskedDSJSON{

@@ -5,47 +5,56 @@ package conn
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"time"
 
 	"github.com/AllenMuu/mysql-cli/internal/config"
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 )
 
+// ErrConnFailed 哨兵 error：所有连接失败（含 SSH 隧道、sql.Open、Ping）
+// 都用 %w 包装它，让 cli 层 mapError 用 errors.Is 精确命中 ExitConnFailed，
+// 取代脆弱的字符串匹配（"dial"/"connection"）。注意驱动直接抛的、未被本包
+// 包装的错误仍走字符串兜底，但本包返回的错误一律走哨兵。
+var ErrConnFailed = errors.New("conn: connection failed")
+
 // DSN renders a go-sql-driver/mysql DSN with tls, charset, sql_mode, timeout.
+// 使用 mysql.Config + FormatDSN 构造，确保密码等字段正确转义（含 @ / ? # 等特殊字符）。
+//
+// 默认值（host=localhost / port=3306 / timeout=10 / charset=utf8mb4 / sql_mode=TRADITIONAL）
+// 统一由 config.applyDefaults 负责，本函数不再重复兜底——避免改一处忘改另一处漂移。
+// 调用方应保证传入的 ds 已经过 Resolve/applyDefaults 处理；仅 timeout 保留兜底，
+// 因为 mysql.Config.Timeout=0 会被驱动视为「无超时」，与历史 10s 行为不符，且
+// 测试可能直接构造 Datasource 不走 applyDefaults。
 func DSN(ds config.Datasource) string {
-	host := ds.Host
-	if host == "" {
-		host = "localhost"
-	}
-	port := ds.Port
-	if port == 0 {
-		port = 3306
-	}
 	timeout := ds.ConnectTimeout
 	if timeout <= 0 {
 		timeout = 10
 	}
-	params := url.Values{}
-	params.Set("timeout", fmt.Sprintf("%ds", timeout))
-	charset := ds.Charset
-	if charset == "" {
-		charset = "utf8mb4"
+	cfg := mysql.Config{
+		User:   ds.User,
+		Passwd: ds.Password, // FormatDSN 会负责转义，含 @ / ? # 也安全
+		Net:    "tcp",
+		Addr:   fmt.Sprintf("%s:%d", ds.Host, ds.Port),
+		DBName: ds.Database,
+		Params: map[string]string{
+			"charset": ds.Charset,
+		},
+		Timeout: time.Duration(timeout) * time.Second,
 	}
-	params.Set("charset", charset)
 	if ds.SQLMode != "" {
-		params.Set("sql_mode", ds.SQLMode)
+		cfg.Params["sql_mode"] = ds.SQLMode
 	}
 	if ds.Collation != "" {
-		params.Set("collation", ds.Collation)
+		// 用专门字段而非 Params，确保 FormatDSN 输出 collation 参数。
+		cfg.Collation = ds.Collation
 	}
 	if ds.SSLMode != "" {
-		params.Set("tls", ds.SSLMode)
+		cfg.TLSConfig = ds.SSLMode
 	}
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?%s",
-		ds.User, ds.Password, host, port, ds.Database, params.Encode())
+	return cfg.FormatDSN()
 }
 
 // Pool wraps a *sql.DB for the active datasource.
@@ -68,9 +77,12 @@ func openWithTunnelHook(ctx context.Context, ds config.Datasource, hook tunnelHo
 	effective := ds
 	var tunnelCloser io.Closer
 	if ds.SSH != nil && ds.SSH.Enable {
-		host, port, closer, err := hook(ds.SSH)
+		// 把 ds.ConnectTimeout 传给 tunnel hook，让 SSH 拨号超时与 MySQL 一致；
+		// establishTunnel 内部对 <=0 回落默认 10s。
+		host, port, closer, err := hook(ds.SSH, ds.ConnectTimeout)
 		if err != nil {
-			return nil, err
+			// SSH 隧道建立失败 -> 连接失败。双 %w 保链，cli 层 errors.Is 可命中。
+			return nil, fmt.Errorf("%w: %w", ErrConnFailed, err)
 		}
 		effective.Host = host
 		effective.Port = port
@@ -81,7 +93,7 @@ func openWithTunnelHook(ctx context.Context, ds config.Datasource, hook tunnelHo
 		if tunnelCloser != nil {
 			tunnelCloser.Close()
 		}
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrConnFailed, err)
 	}
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(2)
@@ -96,7 +108,7 @@ func openWithTunnelHook(ctx context.Context, ds config.Datasource, hook tunnelHo
 		if tunnelCloser != nil {
 			tunnelCloser.Close()
 		}
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrConnFailed, err)
 	}
 	return &Pool{DB: db, closer: tunnelCloser}, nil
 }

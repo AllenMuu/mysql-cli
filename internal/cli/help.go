@@ -31,7 +31,7 @@ func applyHelpGrouping(root *cobra.Command) {
 			c.GroupID = groupSQL
 		case "schema", "sample", "tables", "databases", "read", "explore", "analyze":
 			c.GroupID = groupSchema
-		case "config", "skill", "init", "version", "agent":
+		case "config", "version", "agent":
 			c.GroupID = groupManage
 		}
 	}
@@ -47,11 +47,10 @@ const agentNotesTemplate = `
 Agent notes:
   Output: JSON by default (agent-friendly); switch with -f table|csv|tsv|jsonl.
   Exit codes: 0 OK | 2 conn | 3 readonly | 4 ddl-needs-write | 5 destructive-needs-yes
-    | 6 identifier | 7 multi-statement | 8 sql | 9 timeout | 10 config | 11 init.
+    | 6 identifier | 7 multi-statement | 8 sql | 9 timeout | 10 config | 11 internal.
   Safety: read-only by default. DML needs --write; DDL needs --write --ddl;
     DROP/TRUNCATE and WHERE-less UPDATE/DELETE need --yes.
-  Skills: 'mysql-cli skill install' installs agent skills;
-    'mysql-cli skill check' verifies version sync.
+  Skills: install agent skills via 'npx skills add AllenMuu/mysql-cli'.
   Write guard: 'mysql-cli agent init' installs per-agent configs that prompt a
     human before mysql-cli writes (--write/--ddl/--yes).
 `

@@ -92,12 +92,18 @@ func Format(r result.Result, format string) (string, error) {
 	}
 }
 
+// cellString 把单元格值转成字符串供 csv/tsv/table 使用。nil 与空字符串都返回 ""。
+// 注意：table 格式需要在 cellString 之外区分 nil 与 ""（渲染为 NULL vs 空单元格），
+// 用 cellIsNil 判断；csv/tsv 两者都渲染为空字段。
 func cellString(v any) string {
 	if v == nil {
 		return ""
 	}
 	return fmt.Sprintf("%v", v)
 }
+
+// cellIsNil 报告单元格是否为 nil（区分 NULL 与空字符串）。
+func cellIsNil(v any) bool { return v == nil }
 
 func formatDelimited(r result.Result, sep string) (string, error) {
 	var buf bytes.Buffer
@@ -126,9 +132,12 @@ func formatTable(r result.Result) string {
 	for _, row := range r.Rows {
 		cells := make([]string, len(row))
 		for i, c := range row {
-			cells[i] = cellString(c)
-			if cells[i] == "" {
+			// 只把 nil 渲染为 "NULL"，空字符串保留为空单元格——
+			// 与数据库 NULL vs '' 语义对齐，避免以前 nil/"" 都渲染成 "NULL" 的失真。
+			if cellIsNil(c) {
 				cells[i] = "NULL"
+			} else {
+				cells[i] = cellString(c)
 			}
 		}
 		tw.Append(cells)

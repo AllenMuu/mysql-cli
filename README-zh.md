@@ -143,15 +143,19 @@ mysql-cli query "SELECT * FROM users LIMIT 10"      # 默认 JSON 输出
 | `copilot` | `.vscode/settings.json` + `.github/copilot-instructions.md` | VS Code User `settings.json` | **强制**(`autoApprove` 正则 → false) |
 | `codebuddy` | `.codebuddy/settings.json` + `.codebuddy/hooks/mysql-write-guard.py` | `~/.codebuddy/...` | **强制**(PreToolUse hook → ask) |
 | `trae` | `.trae/hooks.json` + `.trae/hooks/mysql-write-guard.py` | `~/.trae-cn/hooks.json` + `~/.trae-cn/hooks/mysql-write-guard.py` | **强制**(PreToolUse hook → ask;matcher `RunCommand`) |
+| `pi` | `.pi/extensions/mysql-write-guard.ts` | `~/.pi/agent/extensions/mysql-write-guard.ts` | **强制**(`tool_call` hook → `ctx.ui.confirm` → block;matcher `bash`) |
 
 - **强制** = 引擎级闸门:只有带 `--write` / `--ddl` / `--yes` 的命令才弹窗,只读静默放行。
 - **引导** = 上下文指令,依赖模型自觉遵守(无引擎闸门)。
 - Codex **不支持** -- hook 机制未坐实,`.rules` 无法按 flag 精确拦截。
 - 合并类配置(`settings.json`、`opencode.json`、`.vscode/settings.json`、TRAE `hooks.json`)
-  会**深合并**进现有文件并备份 `.bak`;重复安装幂等。单文件配置(`.mdc`、`.md`)
+  会**深合并**进现有文件并备份 `.bak`;重复安装幂等。单文件配置(`.mdc`、`.md`、Pi `.ts`)
   默认跳过已存在文件,`--force` 覆盖。
 - TRAE 路径不对称(项目级 `.trae` vs 全局 `~/.trae-cn`,带 `-cn` 后缀)是 TRAE 官方设计,
   国际版 / 中国版相同。
+- Pi 自动发现 `extensions/*.ts`,无需改 `settings.json`;装好后在 pi 里 `/reload` 即可生效。
+  项目级扩展首次启动 pi 时需 `/trust` 当前项目才加载;全局扩展立即可用。Pi 内置 shell 工具名为
+  `bash`(小写),决策对象形状为 `{ block: true, reason? }`。
 
 ### 怎么运行
 
@@ -299,6 +303,7 @@ mysql-cli 按链发现配置文件并合并:
 | `8` | SQL 错误 |
 | `9` | 超时 |
 | `10` | 配置错误 |
+| `11` | 内部错误（panic） |
 
 ## 安全
 

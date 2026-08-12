@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -23,7 +24,9 @@ func defaultConfigPath() string {
 	if err != nil {
 		home = ""
 	}
-	return home + "/.config/mysql-cli/config.toml"
+	// 用 filepath.Join 而非字符串拼接 "/"，避免在 Windows 上生成混用分隔符的路径
+	// （C:\Users\foo/.config/mysql-cli/config.toml）。os.Stat 能容忍，但不规范。
+	return filepath.Join(home, config.RelConfigPath)
 }
 
 func (g *Globals) resolve() (config.Datasource, error) {
@@ -171,12 +174,12 @@ func newQueryCmd(g *Globals) *cobra.Command {
 			// need no database, so their exit codes are returned without
 			// attempting (and failing on) a connection.
 			if safety.HasMultiStatement(sqlText) {
-				err := fmt.Errorf("%w: %v", query.ErrMultiStatement, safety.ErrMultiStatement)
+				err := fmt.Errorf("%w: %w", query.ErrMultiStatement, safety.ErrMultiStatement)
 				g.emitResult(result.Empty(), err)
 				return err
 			}
 			if _, err := safety.Check(sqlText, safety.CheckOptions{Write: g.Write, DDL: g.DDL, Yes: g.Yes}); err != nil {
-				err = fmt.Errorf("%w: %v", query.ErrGuard, err)
+				err = fmt.Errorf("%w: %w", query.ErrGuard, err)
 				g.emitResult(result.Empty(), err)
 				return err
 			}
@@ -212,8 +215,30 @@ func newTxnCmd(g *Globals) *cobra.Command {
 		Short: "Run multiple statements in one atomic transaction",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Validate before connecting: mirror ExecuteTxn's internal checks
+			// (txn requires --write, plus per-statement multi-statement and
+			// guard) so readonly/multi-statement/destructive cases return
+			// their correct exit codes without attempting a connection.
+			if !g.Write {
+				err := fmt.Errorf("%w: txn requires --write", query.ErrGuard)
+				g.emitResult(result.Empty(), err)
+				return err
+			}
+			for _, s := range args {
+				if safety.HasMultiStatement(s) {
+					err := fmt.Errorf("%w: %w", query.ErrMultiStatement, safety.ErrMultiStatement)
+					g.emitResult(result.Empty(), err)
+					return err
+				}
+				if _, err := safety.Check(s, safety.CheckOptions{Write: g.Write, DDL: g.DDL, Yes: g.Yes}); err != nil {
+					err = fmt.Errorf("%w: %w", query.ErrGuard, err)
+					g.emitResult(result.Empty(), err)
+					return err
+				}
+			}
 			pool, err := g.openPool()
 			if err != nil {
+				g.emitResult(result.Empty(), err)
 				return err
 			}
 			defer pool.Close()
@@ -234,8 +259,8 @@ func newSchemaCmd(g *Globals) *cobra.Command {
 			if len(args) == 1 {
 				table = args[0]
 			}
-			return g.runSchema(func(p *conn.Pool) (result.Result, error) {
-				return schema.Schema(context.Background(), p, table)
+			return g.runSchema(func(ctx context.Context, p *conn.Pool) (result.Result, error) {
+				return schema.Schema(ctx, p, table)
 			})
 		},
 	}
@@ -250,8 +275,8 @@ func newSampleCmd(g *Globals) *cobra.Command {
 	c.Flags().IntP("n", "n", 5, "sample row count (max 20)")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		n, _ := cmd.Flags().GetInt("n")
-		return g.runSchema(func(p *conn.Pool) (result.Result, error) {
-			return schema.Sample(context.Background(), p, args[0], n)
+		return g.runSchema(func(ctx context.Context, p *conn.Pool) (result.Result, error) {
+			return schema.Sample(ctx, p, args[0], n)
 		})
 	}
 	return c
@@ -267,8 +292,8 @@ func newTablesCmd(g *Globals) *cobra.Command {
 			if len(args) == 1 {
 				db = args[0]
 			}
-			return g.runSchema(func(p *conn.Pool) (result.Result, error) {
-				return schema.Tables(context.Background(), p, db)
+			return g.runSchema(func(ctx context.Context, p *conn.Pool) (result.Result, error) {
+				return schema.Tables(ctx, p, db)
 			})
 		},
 	}
@@ -280,8 +305,8 @@ func newDatabasesCmd(g *Globals) *cobra.Command {
 		Short: "List databases",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return g.runSchema(func(p *conn.Pool) (result.Result, error) {
-				return schema.Databases(context.Background(), p)
+			return g.runSchema(func(ctx context.Context, p *conn.Pool) (result.Result, error) {
+				return schema.Databases(ctx, p)
 			})
 		},
 	}
@@ -293,8 +318,8 @@ func newReadCmd(g *Globals) *cobra.Command {
 		Short: "First 100 rows of a table",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return g.runSchema(func(p *conn.Pool) (result.Result, error) {
-				return schema.Read(context.Background(), p, args[0])
+			return g.runSchema(func(ctx context.Context, p *conn.Pool) (result.Result, error) {
+				return schema.Read(ctx, p, args[0])
 			})
 		},
 	}
@@ -306,8 +331,8 @@ func newExploreCmd(g *Globals) *cobra.Command {
 		Short: "Database and table overview",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return g.runSchema(func(p *conn.Pool) (result.Result, error) {
-				return schema.Explore(context.Background(), p)
+			return g.runSchema(func(ctx context.Context, p *conn.Pool) (result.Result, error) {
+				return schema.Explore(ctx, p)
 			})
 		},
 	}
@@ -319,21 +344,34 @@ func newAnalyzeCmd(g *Globals) *cobra.Command {
 		Short: "Schema + sample in one shot",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return g.runSchema(func(p *conn.Pool) (result.Result, error) {
-				return schema.Analyze(context.Background(), p, args[0])
+			return g.runSchema(func(ctx context.Context, p *conn.Pool) (result.Result, error) {
+				return schema.Analyze(ctx, p, args[0])
 			})
 		},
 	}
 }
 
-func (g *Globals) runSchema(fn func(*conn.Pool) (result.Result, error)) error {
+// schemaTimeoutCtx 构造 schema 命令使用的 ctx。Timeout<=0 时回退到
+// context.Background()（与 query 命令行为对齐）。schema 包本身不会自己加
+// 超时保护，必须在 cli 层包一层，避免在慢库上挂起。
+func (g *Globals) schemaTimeoutCtx() (context.Context, context.CancelFunc) {
+	to, _ := time.ParseDuration(g.Timeout)
+	if to <= 0 {
+		return context.Background(), func() {}
+	}
+	return context.WithTimeout(context.Background(), to)
+}
+
+func (g *Globals) runSchema(fn func(ctx context.Context, p *conn.Pool) (result.Result, error)) error {
 	pool, err := g.openPool()
 	if err != nil {
 		g.emitResult(result.Empty(), err)
 		return err
 	}
 	defer pool.Close()
-	r, err := fn(pool)
+	ctx, cancel := g.schemaTimeoutCtx()
+	defer cancel()
+	r, err := fn(ctx, pool)
 	g.emitResult(r, err)
 	return err
 }

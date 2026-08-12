@@ -6,16 +6,22 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/AllenMuu/mysql-cli/internal/config"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // tunnelHook is overridable for testing. The returned io.Closer releases the
 // underlying SSH client and local listener so callers (e.g. Pool.Close) can
 // tear the tunnel down cleanly.
-type tunnelHook func(*config.SSHConfig) (host string, port int, closer io.Closer, err error)
+//
+// connectTimeout 是 SSH 拨号超时（秒），<=0 时 establishTunnel 内部回落默认 10s。
+// 通过参数显式传入而非让 establishTunnel 自行硬编码，是为了让 ds.ConnectTimeout
+// 配置真正生效（SSHConfig 自身没有 ConnectTimeout 字段，不能改 config 包）。
+type tunnelHook func(cfg *config.SSHConfig, connectTimeout int) (host string, port int, closer io.Closer, err error)
 
 // defaultTunnelHook is the production tunnel hook.
 var defaultTunnelHook tunnelHook = establishTunnel
@@ -48,7 +54,18 @@ func (t *tunnel) Close() error {
 // establishTunnel connects to the SSH bastion and forwards a local port
 // to the remote MySQL. It returns the local address to dial and a Closer
 // that releases the SSH client + local listener.
-func establishTunnel(cfg *config.SSHConfig) (string, int, io.Closer, error) {
+//
+// connectTimeout 控制 ssh.Dial 的超时；<=0 时回落默认 10s（与历史行为一致）。
+func establishTunnel(cfg *config.SSHConfig, connectTimeout int) (string, int, io.Closer, error) {
+	// 先校验私钥文件权限：群组/其他可读的私钥拒绝使用，避免被同机其他用户窃取。
+	// 必须在读私钥前做，否则 os.ReadFile 仍会成功读出内容（mode 只挡 open 不挡已读）。
+	info, err := os.Stat(cfg.KeyPath)
+	if err != nil {
+		return "", 0, nil, fmt.Errorf("ssh key: %w", err)
+	}
+	if perm := info.Mode().Perm() & 0o077; perm != 0 {
+		return "", 0, nil, fmt.Errorf("private key file %s is too open (mode %v); expected 0600 or stricter", cfg.KeyPath, info.Mode().Perm())
+	}
 	keyBytes, err := os.ReadFile(cfg.KeyPath)
 	if err != nil {
 		return "", 0, nil, fmt.Errorf("ssh key: %w", err)
@@ -65,11 +82,20 @@ func establishTunnel(cfg *config.SSHConfig) (string, int, io.Closer, error) {
 	if sshPort == 0 {
 		sshPort = 22
 	}
+	hostKeyCallback, err := buildHostKeyCallback(cfg)
+	if err != nil {
+		return "", 0, nil, err
+	}
+	// SSH 拨号超时从入参读取（来源 ds.ConnectTimeout），<=0 回落默认 10s。
+	dialTimeout := time.Duration(connectTimeout) * time.Second
+	if connectTimeout <= 0 {
+		dialTimeout = 10 * time.Second
+	}
 	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", sshHost, sshPort), &ssh.ClientConfig{
 		User:            cfg.User,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		Timeout:         10 * time.Second,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         dialTimeout,
+		HostKeyCallback: hostKeyCallback,
 	})
 	if err != nil {
 		return "", 0, nil, fmt.Errorf("ssh dial: %w", err)
@@ -110,11 +136,66 @@ func establishTunnel(cfg *config.SSHConfig) (string, int, io.Closer, error) {
 	return "127.0.0.1", localPort, &tunnel{sshClient: client, listener: listener}, nil
 }
 
+// proxy 在两个 conn 之间双向 io.Copy。
+//
+// 等待两个方向的 goroutine 都结束才返回，避免 REPL 长期运行下另一个方向的
+// goroutine 永久阻塞泄漏。为防止 tunnel.Close 后对端不主动关闭导致 io.Copy 卡住，
+// 在第一个方向结束后启动 5s 宽限计时器：宽限内另一个方向仍未结束就强制关闭两侧
+// conn（io.Copy 会在 conn 关闭后返回，不会真正泄漏 fd）。
+//
+// 注意：宽限计时器必须在「第一个方向结束」之后才启动，不能在 proxy 进入时立即启动
+// ——否则长查询（>5s 的 SELECT/UPDATE）会被误杀，连接池空闲连接也会在 5s 后被
+// 强制关闭导致下次复用拿到死连接。原实现即此 bug，已修复。
 func proxy(a, b net.Conn) {
-	defer a.Close()
-	defer b.Close()
-	done := make(chan struct{}, 2)
-	go func() { io.Copy(a, b); done <- struct{}{} }()
-	go func() { io.Copy(b, a); done <- struct{}{} }()
-	<-done
+	var wg sync.WaitGroup
+	wg.Add(2)
+	oneDone := make(chan struct{}, 2) // 缓冲 2，避免 goroutine 写入时阻塞
+	go func() { defer wg.Done(); io.Copy(a, b); oneDone <- struct{}{} }()
+	go func() { defer wg.Done(); io.Copy(b, a); oneDone <- struct{}{} }()
+	// 等第一个方向结束。MySQL 协议下任一方向 EOF（server 关闭）通常意味着会话结束。
+	<-oneDone
+	select {
+	case <-oneDone:
+		// 第二个方向也结束，无需宽限。
+	case <-time.After(5 * time.Second):
+		// 宽限超时：另一个方向仍未结束，强制关闭两侧 conn 触发 io.Copy 返回。
+		log.Printf("ssh tunnel: proxy grace timeout after 5s, forcing close")
+	}
+	a.Close()
+	b.Close()
+	wg.Wait()
+}
+
+// buildHostKeyCallback 构造 SSH host key 校验回调。
+//
+// 默认要求 known_hosts 校验（防 MITM）。仅当 cfg.InsecureIgnoreHostKey=true
+// 时跳过校验，并在 stderr 打 warning。known_hosts 文件不存在时返回明确 error，
+// 提示用户先 ssh 一次目标主机或显式开启 insecure 模式。
+func buildHostKeyCallback(cfg *config.SSHConfig) (ssh.HostKeyCallback, error) {
+	if cfg == nil {
+		// 不允许 nil cfg 进 SSH 路径；调用方失误应立即暴露。
+		return nil, fmt.Errorf("ssh config is nil, cannot build host key callback")
+	}
+	if cfg.InsecureIgnoreHostKey {
+		fmt.Fprintln(os.Stderr, "WARNING: SSH host key verification disabled, MITM risk")
+		return ssh.InsecureIgnoreHostKey(), nil
+	}
+	knownHostsFile := cfg.KnownHostsFile
+	if knownHostsFile == "" {
+		// 配置层 applyDefaults 应已填好默认值；此处兜底防止直连 SSH 配置未经 Resolve。
+		if home, err := os.UserHomeDir(); err == nil {
+			knownHostsFile = home + "/.ssh/known_hosts"
+		}
+	}
+	if _, err := os.Stat(knownHostsFile); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("known_hosts file %q not found: ssh the target host once first, or set ssh.insecure_ignore_host_key=true (insecure, MITM risk)", knownHostsFile)
+		}
+		return nil, fmt.Errorf("stat known_hosts %q: %w", knownHostsFile, err)
+	}
+	cb, err := knownhosts.New(knownHostsFile)
+	if err != nil {
+		return nil, fmt.Errorf("load known_hosts %q: %w", knownHostsFile, err)
+	}
+	return cb, nil
 }

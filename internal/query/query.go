@@ -43,7 +43,7 @@ func Execute(ctx context.Context, pool *conn.Pool, sqlText string, opts Options)
 		return result.Empty(), ErrMultiStatement
 	}
 	if _, err := safety.Check(sqlText, safety.CheckOptions{Yes: opts.Yes}); err != nil {
-		return result.Empty(), fmt.Errorf("%w: %v", ErrGuard, err)
+		return result.Empty(), fmt.Errorf("%w: %w", ErrGuard, err)
 	}
 
 	execSQL := applyLimit(sqlText, opts.Limit, opts.Probe)
@@ -57,35 +57,15 @@ func Execute(ctx context.Context, pool *conn.Pool, sqlText string, opts Options)
 	rows, err := pool.DB.QueryContext(ctx, execSQL)
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
-			return result.Empty(), fmt.Errorf("%w: %v", ErrTimeout, err)
+			return result.Empty(), fmt.Errorf("%w: %w", ErrTimeout, err)
 		}
-		return result.Empty(), fmt.Errorf("%w: %v", ErrSQL, err)
+		return result.Empty(), fmt.Errorf("%w: %w", ErrSQL, err)
 	}
 	defer rows.Close()
 
-	cols, err := rows.Columns()
+	res, err := result.ScanRows(rows)
 	if err != nil {
-		return result.Empty(), fmt.Errorf("%w: %v", ErrSQL, err)
-	}
-	res := result.Result{Columns: cols}
-	for rows.Next() {
-		vals := make([]any, len(cols))
-		ptrs := make([]any, len(cols))
-		for i := range vals {
-			ptrs[i] = &vals[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			return result.Empty(), fmt.Errorf("%w: %v", ErrSQL, err)
-		}
-		for i, v := range vals {
-			if b, ok := v.([]byte); ok {
-				vals[i] = string(b)
-			}
-		}
-		res.Rows = append(res.Rows, vals)
-	}
-	if err := rows.Err(); err != nil {
-		return result.Empty(), fmt.Errorf("%w: %v", ErrSQL, err)
+		return result.Empty(), fmt.Errorf("%w: %w", ErrSQL, err)
 	}
 	if opts.Probe && opts.Limit > 0 && selectRe.MatchString(sqlText) && len(res.Rows) > opts.Limit {
 		res.Truncated = true
@@ -101,7 +81,7 @@ func applyLimit(sqlText string, limit int, probe bool) string {
 	if limit <= 0 || !selectRe.MatchString(sqlText) {
 		return sqlText
 	}
-	if hasLimit(sqlText) {
+	if hasLimitClause(sqlText) {
 		return sqlText
 	}
 	// Strip a trailing semicolon so the wrapped subquery stays valid SQL.
@@ -115,9 +95,9 @@ func applyLimit(sqlText string, limit int, probe bool) string {
 
 var ownLimitRe = regexp.MustCompile(`(?i)\bLIMIT\b\s+\d+`)
 
-// hasLimit reports whether sqlText appears to already contain a LIMIT clause.
+// hasLimitClause reports whether sqlText appears to already contain a LIMIT clause.
 // It is a simple regex heuristic: LIMIT inside a string literal will be
 // false-matched. Callers that need perfect SQL parsing should not rely on this.
-func hasLimit(sqlText string) bool {
+func hasLimitClause(sqlText string) bool {
 	return ownLimitRe.MatchString(sqlText)
 }

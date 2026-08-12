@@ -160,7 +160,7 @@ func TestLookupAndNames(t *testing.T) {
 	assert.Equal(t, CapEnforce, a.Cap)
 	_, ok = Lookup("nope")
 	assert.False(t, ok)
-	assert.Len(t, Names(), 6)
+	assert.Len(t, Names(), 7)
 }
 
 func TestInstall_TraeProject(t *testing.T) {
@@ -277,4 +277,77 @@ func TestInstall_TraeMergesIntoExisting(t *testing.T) {
 	// .bak backup created.
 	_, err = os.Stat(hooksJSONPath + ".bak")
 	assert.NoError(t, err, ".bak backup created for hooks.json")
+}
+
+func TestInstall_PiProject(t *testing.T) {
+	dir := t.TempDir()
+	written, err := pi.Install(InstallOpts{Scope: ScopeProject, ProjectDir: dir})
+	require.NoError(t, err)
+	require.Len(t, written, 1)
+
+	// Project scope: .pi/extensions/mysql-write-guard.ts (single file, no settings.json).
+	extPath := filepath.Join(dir, ".pi", "extensions", "mysql-write-guard.ts")
+	assert.Contains(t, written, extPath)
+
+	info, err := os.Stat(extPath)
+	require.NoError(t, err)
+	// actionWriteFile uses 0o644, NOT executable (TS extension is loaded by pi runtime, not exec'd).
+	assert.Zero(t, info.Mode()&0o100, "TS extension must not be executable")
+
+	data, err := os.ReadFile(extPath)
+	require.NoError(t, err)
+	body := string(data)
+	assert.Contains(t, body, `pi.on("tool_call"`)
+	assert.Contains(t, body, `event.toolName !== "bash"`, "Pi tool name is lowercase 'bash'")
+	assert.Contains(t, body, "ctx.ui.confirm")
+	assert.Contains(t, body, "block: true")
+
+	// No settings.json or hooks.json should be written (auto-discovery, single file).
+	_, err = os.Stat(filepath.Join(dir, ".pi", "settings.json"))
+	assert.True(t, os.IsNotExist(err), "Pi install must not write settings.json (auto-discovery)")
+}
+
+func TestInstall_PiGlobal(t *testing.T) {
+	home := t.TempDir()
+	written, err := pi.Install(InstallOpts{Scope: ScopeGlobal, Home: home})
+	require.NoError(t, err)
+	require.Len(t, written, 1)
+
+	// Global scope: ~/.pi/agent/extensions/mysql-write-guard.ts.
+	extPath := filepath.Join(home, ".pi", "agent", "extensions", "mysql-write-guard.ts")
+	assert.Contains(t, written, extPath)
+
+	data, err := os.ReadFile(extPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `pi.on("tool_call"`)
+}
+
+func TestInstall_PiDryRun(t *testing.T) {
+	dir := t.TempDir()
+	written, err := pi.Install(InstallOpts{Scope: ScopeProject, ProjectDir: dir, DryRun: true})
+	require.NoError(t, err)
+	require.Len(t, written, 1)
+	assert.True(t, strings.HasPrefix(written[0], "write"), "dry-run emits 'write <path>'")
+
+	// Dry-run must not touch the filesystem.
+	_, err = os.Stat(filepath.Join(dir, ".pi", "extensions", "mysql-write-guard.ts"))
+	assert.True(t, os.IsNotExist(err), "dry-run must not write")
+}
+
+func TestInstall_PiSkipIfExists(t *testing.T) {
+	dir := t.TempDir()
+	// First install writes the extension.
+	written1, err := pi.Install(InstallOpts{Scope: ScopeProject, ProjectDir: dir})
+	require.NoError(t, err)
+	require.Len(t, written1, 1)
+
+	// Second install without --force must be a no-op (skip existing).
+	written2, err := pi.Install(InstallOpts{Scope: ScopeProject, ProjectDir: dir})
+	require.NoError(t, err)
+	assert.Empty(t, written2, "second install without --force must skip the existing file")
+
+	// --force overwrites.
+	written3, err := pi.Install(InstallOpts{Scope: ScopeProject, ProjectDir: dir, Force: true})
+	require.NoError(t, err)
+	require.Len(t, written3, 1, "--force overwrites the existing extension")
 }

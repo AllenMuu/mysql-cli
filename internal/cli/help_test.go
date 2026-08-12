@@ -55,7 +55,7 @@ func TestRootHelpIncludesAgentNotes(t *testing.T) {
 	for _, want := range []string{
 		"Agent notes",
 		"Exit codes",
-		"skill install",
+		"npx skills add",
 		"read-only by default",
 	} {
 		assert.Contains(t, s, want)

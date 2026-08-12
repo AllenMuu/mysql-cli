@@ -130,7 +130,7 @@ func TestApplyLimitProbe(t *testing.T) {
 		{name: "probe wraps limit+1", sql: "SELECT id FROM t", limit: 100, probe: true, expected: "SELECT * FROM (SELECT id FROM t) AS _q LIMIT 101"},
 		{name: "no probe wraps limit", sql: "SELECT id FROM t", limit: 100, probe: false, expected: "SELECT * FROM (SELECT id FROM t) AS _q LIMIT 100"},
 		{name: "probe ignored when limit<=0", sql: "SELECT id FROM t", limit: 0, probe: true, expected: "SELECT id FROM t"},
-		{name: "probe ignored when hasLimit", sql: "SELECT id FROM t LIMIT 5", limit: 100, probe: true, expected: "SELECT id FROM t LIMIT 5"},
+		{name: "probe ignored when hasLimitClause", sql: "SELECT id FROM t LIMIT 5", limit: 100, probe: true, expected: "SELECT id FROM t LIMIT 5"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

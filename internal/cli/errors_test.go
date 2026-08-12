@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/AllenMuu/mysql-cli/internal/config"
+	"github.com/AllenMuu/mysql-cli/internal/conn"
 	"github.com/AllenMuu/mysql-cli/internal/query"
 	"github.com/AllenMuu/mysql-cli/internal/safety"
 	"github.com/stretchr/testify/assert"
@@ -24,8 +26,15 @@ func TestMapError(t *testing.T) {
 		{"timeout", query.ErrTimeout, ExitQueryTimeout},
 		{"sql", query.ErrSQL, ExitSQLError},
 		{"guard", query.ErrGuard, ExitReadonlyViolation},
-		{"connection dial", errors.New("dial tcp: connection refused"), ExitConnFailed},
-		{"connection msg", errors.New("broken connection"), ExitConnFailed},
+		// conn.ErrConnFailed 哨兵路径（任务 2）：双 %w 包装后 errors.Is 命中。
+		{"conn sentinel wrapped", fmt.Errorf("%w: %w", conn.ErrConnFailed, errors.New("dial tcp: refused")), ExitConnFailed},
+		{"conn sentinel direct", conn.ErrConnFailed, ExitConnFailed},
+		// 字符串兜底：仅 "dial" 仍命中（驱动直接抛、未经 conn 包装）。
+		{"connection dial string fallback", errors.New("dial tcp: connection refused"), ExitConnFailed},
+		// 关键回归：SQL error 含 "connection" 字样不再误判为 exit 2，落到 exit 8。
+		{"sql error with connection word", fmt.Errorf("%w: bad connection in sql", query.ErrSQL), ExitSQLError},
+		// config.ErrConfig 哨兵路径（任务 2）。
+		{"config sentinel wrapped", fmt.Errorf("%w: %w", config.ErrConfig, errors.New("unknown datasource")), ExitConfigError},
 		{"config fallback", errors.New("unknown datasource"), ExitConfigError},
 	}
 	for _, tt := range tests {
@@ -65,5 +74,18 @@ func TestErrorCodeName(t *testing.T) {
 	}
 	for _, tc := range cases {
 		assert.Equal(t, tc.want, errorCodeName(tc.code))
+	}
+}
+
+// TestExitCodeConsistency（任务 4）：遍历 exitCodeHelpHints 表，断言每个退出码
+// 在 help.go 的 agentNotesTemplate 里都有对应文本行。这是退出码"行为侧"
+// （mapError/errorCodeName）与"文档侧"（--help 输出）一致性的最小保障。
+// 新增退出码时若忘了同步 help 模板，本测试会失败。
+func TestExitCodeConsistency(t *testing.T) {
+	for _, h := range exitCodeHelpHints {
+		t.Run(h.Hint, func(t *testing.T) {
+			assert.Contains(t, agentNotesTemplate, h.Hint,
+				"退出码 %d 的 help 提示 %q 未在 agentNotesTemplate 中找到，请同步更新 help.go", h.Code, h.Hint)
+		})
 	}
 }

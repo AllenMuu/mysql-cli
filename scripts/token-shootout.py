@@ -92,8 +92,20 @@ class McpClient:
         self.proc.stdin.flush()
 
     def _recv(self, want_id, timeout=180):
+        # 修复：原实现直接调用 readline()，readline 是阻塞的——MCP server 不响应
+        # 时永远不返回，外层 while time.time() < end 判断永远走不到，超时形同虚设。
+        # 改用 select 带 0.2s 超时轮询 stdout 可读性，readline 仅在 select 报告
+        # 可读后才调用，这样超时逻辑真正生效。
+        import select as _select
         end = time.time() + timeout
         while time.time() < end:
+            remaining = max(0.0, end - time.time())
+            poll = min(0.2, remaining)
+            if poll <= 0:
+                break
+            ready, _, _ = _select.select([self.proc.stdout], [], [], poll)
+            if not ready:
+                continue  # 此次轮询无数据，回到 while 顶检查 deadline
             line = self.proc.stdout.readline()
             if not line:
                 tail = "".join(self._stderr_lines[-10:])

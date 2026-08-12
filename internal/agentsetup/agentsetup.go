@@ -26,6 +26,9 @@ var copilotInstructions string
 //go:embed templates/codebuddy.md
 var codebuddyRule string
 
+//go:embed templates/pi-mysql-write-guard.ts
+var piExtensionScript []byte
+
 // Capability classifies how forcefully an agent guards writes.
 type Capability int
 
@@ -91,7 +94,7 @@ type Agent struct {
 }
 
 // Agents is the ordered registry of supported agents.
-var Agents = []Agent{claudeCode, cursor, opencode, copilot, codebuddy, trae}
+var Agents = []Agent{claudeCode, cursor, opencode, copilot, codebuddy, trae, pi}
 
 // Lookup returns the agent with the given name.
 func Lookup(name string) (Agent, bool) {
@@ -156,6 +159,11 @@ func execStep(s step, opts InstallOpts) (string, error) {
 		}
 		return s.path, nil
 	case actionCopyScript:
+		// 与 actionWriteFile 一致的 Force 语义：已存在且未 --force 则跳过，
+		// 避免重跑 agent init 静默覆盖用户对 hook 脚本的修改。
+		if _, err := os.Stat(s.path); err == nil && !opts.Force {
+			return "", nil // skip existing unless --force
+		}
 		if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 			return "", err
 		}
@@ -172,13 +180,22 @@ func execStep(s step, opts InstallOpts) (string, error) {
 // mergeJSONFile reads path (if present), deep-merges fragment into it (or
 // starts from fragment if absent), backs up the original to .bak, and writes
 // the result. Returns the path written.
+//
+// 备份文件 .bak 沿用原文件的 mode（如原文件是 0600，备份也是 0600），避免硬编码
+// 0644 把其他用户可读权限泄漏到备份里。新写的目标文件保持 0644（JSON 配置文件
+// 常见权限；若需更严，调用方应在 install 后自行 chmod）。
 func mergeJSONFile(path string, fragment map[string]any) (string, error) {
 	var existing map[string]any
 	if data, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(data, &existing); err != nil {
 			return "", fmt.Errorf("parse %s: %w", path, err)
 		}
-		if err := os.WriteFile(path+".bak", data, 0o644); err != nil {
+		// 取原文件 mode 写备份，避免把 0600 文件备份成 0644 泄漏给同机其他用户。
+		bakMode := os.FileMode(0o644)
+		if info, err := os.Stat(path); err == nil {
+			bakMode = info.Mode().Perm()
+		}
+		if err := os.WriteFile(path+".bak", data, bakMode); err != nil {
 			return "", err
 		}
 	}
@@ -391,6 +408,32 @@ var trae = Agent{
 		return []step{
 			{path: hookPath, action: actionCopyScript, content: hookScript},
 			{path: filepath.Join(base, "hooks.json"), action: actionMergeJSON, fragment: frag},
+		}, nil
+	},
+}
+
+var pi = Agent{
+	Name: "pi",
+	Desc: "Pi Coding Agent (tool_call hook -> ctx.ui.confirm -> block)",
+	Cap:  CapEnforce,
+	steps: func(o InstallOpts) ([]step, error) {
+		// Pi auto-discovers extensions from:
+		//   global  -> ~/.pi/agent/extensions/*.ts        (immediate, no trust)
+		//   project -> <project>/.pi/extensions/*.ts      (requires /trust on first run)
+		// Auto-discovery loads files directly; no settings.json change needed.
+		// Reload with `/reload` inside pi after install.
+		var dir string
+		if o.Scope == ScopeGlobal {
+			dir = filepath.Join(o.Home, ".pi", "agent", "extensions")
+		} else {
+			dir = filepath.Join(o.ProjectDir, ".pi", "extensions")
+		}
+		return []step{
+			{
+				path:    filepath.Join(dir, "mysql-write-guard.ts"),
+				action:  actionWriteFile, // 0o644; skip if exists unless --force
+				content: piExtensionScript,
+			},
 		}, nil
 	},
 }

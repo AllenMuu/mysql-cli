@@ -30,12 +30,22 @@ var (
 
 var (
 	identifierRe   = regexp.MustCompile(`^[a-zA-Z0-9_$]+$`)
-	readPrefixes   = []string{"SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "WITH"}
+	// 注意：WITH 不在 readPrefixes 中。MySQL 8 支持 CTE 前缀的写操作
+	// （WITH ... DELETE FROM t / WITH ... UPDATE t SET ...），仅凭首词
+	// 无法区分 CTE-SELECT 与 CTE-DELETE/UPDATE。为避免在只读模式下放行
+	// CTE-DELETE/UPDATE，保守地将所有 WITH 开头的语句归入 CategoryUnknown，
+	// 要求 --write 才能执行。代价是纯只读的 CTE-SELECT 也需要 --write，
+	// 但这比绕过只读闸门删表安全得多。
+	readPrefixes   = []string{"SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN"}
 	dmlPrefixes    = []string{"INSERT", "UPDATE", "DELETE", "REPLACE"}
 	ddlPrefixes    = []string{"CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME"}
 	destructiveRe  = regexp.MustCompile(`(?i)^\s*(DROP|TRUNCATE)\b`)
 	deleteUpdateRe = regexp.MustCompile(`(?i)^\s*(DELETE|UPDATE)\b`)
-	whereRe        = regexp.MustCompile(`(?i)\bWHERE\b`)
+	// whereRe 仅做 best-effort 检测：只判断 WHERE 关键字是否存在，不分析
+	// WHERE 条件是否恒真（如 WHERE 1=1 / WHERE TRUE）。恒真条件的全表删除
+	// 会被 IsDestructive 误判为非破坏性，但仍需 --write 才能执行。这是有意的
+	// 保守简化，避免实现 SQL 语义分析。
+	whereRe = regexp.MustCompile(`(?i)\bWHERE\b`)
 )
 
 // CheckOptions carries the user's explicit permission flags.
@@ -51,7 +61,7 @@ type Decision struct {
 	Category Category
 }
 
-func firstWord(sql string) string {
+func firstKeyword(sql string) string {
 	s := strings.TrimSpace(sql)
 	for i, r := range s {
 		if r == ' ' || r == '\t' || r == '\n' || r == '(' {
@@ -63,7 +73,7 @@ func firstWord(sql string) string {
 
 // Classify categorizes a SQL statement by its leading keyword.
 func Classify(sql string) Category {
-	w := firstWord(sql)
+	w := firstKeyword(sql)
 	for _, p := range readPrefixes {
 		if w == p {
 			return CategoryRead

@@ -149,6 +149,7 @@ uninterrupted.
 | `copilot` | `.vscode/settings.json` + `.github/copilot-instructions.md` | VS Code User `settings.json` | **enforce** (`autoApprove` regex → false) |
 | `codebuddy` | `.codebuddy/settings.json` + `.codebuddy/hooks/mysql-write-guard.py` | `~/.codebuddy/...` | **enforce** (PreToolUse hook → ask) |
 | `trae` | `.trae/hooks.json` + `.trae/hooks/mysql-write-guard.py` | `~/.trae-cn/hooks.json` + `~/.trae-cn/hooks/mysql-write-guard.py` | **enforce** (PreToolUse hook → ask; matcher `RunCommand`) |
+| `pi` | `.pi/extensions/mysql-write-guard.ts` | `~/.pi/agent/extensions/mysql-write-guard.ts` | **enforce** (`tool_call` hook → `ctx.ui.confirm` → block; matcher `bash`) |
 
 - **enforce** = engine-level gate: only commands with `--write` / `--ddl` / `--yes`
   trigger the prompt; reads pass silently.
@@ -156,10 +157,14 @@ uninterrupted.
 - Codex is **not supported** - its hook story is incomplete and `.rules` can't match flags precisely.
 - Merge-class configs (`settings.json`, `opencode.json`, `.vscode/settings.json`,
   TRAE `hooks.json`) are **deep-merged** into the existing file with a `.bak` backup;
-  re-running is idempotent. Single-file configs (`.mdc`, `.md`) skip existing files
-  unless `--force` is given.
+  re-running is idempotent. Single-file configs (`.mdc`, `.md`, Pi `.ts`) skip
+  existing files unless `--force` is given.
 - TRAE's asymmetric paths (`.trae` project vs `~/.trae-cn` global, the `-cn` suffix)
   are TRAE's official design - identical for international and China editions.
+- Pi auto-discovers `extensions/*.ts`; no `settings.json` change is needed. Reload
+  inside pi with `/reload`. Project-local extensions load only after the project is
+  `/trust`-ed; global extensions work immediately. Pi's built-in shell tool is
+  `bash` (lowercase), and the decision shape is `{ block: true, reason? }`.
 
 ### How to run it
 
@@ -312,6 +317,7 @@ Switch the human-readable formats with `-f table`, `-f csv`, `-f tsv`, or `-f js
 | `8` | SQL error |
 | `9` | Timeout |
 | `10` | Config error |
+| `11` | Internal error (panic) |
 
 ## Safety
 

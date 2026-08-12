@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AllenMuu/mysql-cli/internal/config"
+	"github.com/AllenMuu/mysql-cli/internal/format"
 	"github.com/AllenMuu/mysql-cli/internal/repl"
 	"github.com/AllenMuu/mysql-cli/internal/result"
 	"github.com/spf13/cobra"
@@ -25,6 +27,9 @@ const (
 	ExitSQLError               = 8
 	ExitQueryTimeout           = 9
 	ExitConfigError            = 10
+	// ExitInternalError 用于恢复的 panic：保证 agent 始终拿到 JSON 信封
+	// 而非 Go 堆栈输出。
+	ExitInternalError = 11
 )
 
 // Globals carries parsed global flags shared by all subcommands.
@@ -52,7 +57,22 @@ type Globals struct {
 }
 
 // Run parses args and executes; returns the process exit code.
-func Run(args []string) int {
+//
+// recover 兜底：任一子命令 panic 时，进程不输出 Go 堆栈，而是向 stderr
+// 写一条与现有 format 错误信封同结构的 JSON，并返回 ExitInternalError。
+// 这是给 AI agent 的契约保证——它始终拿到 JSON 而非崩溃输出。
+func Run(args []string) (code int) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		// 尽量复用现有错误信封格式，与 format.ErrorJSON 一致。
+		msg := fmt.Sprintf("panic: %v", r)
+		fmt.Fprintln(os.Stderr, format.ErrorJSON("INTERNAL_ERROR", msg))
+		code = ExitInternalError
+	}()
+
 	g := &Globals{Format: "json", out: os.Stdout, eout: os.Stderr}
 	root := newRootCmd(g)
 	root.SetArgs(args)
@@ -79,6 +99,14 @@ func newRootCmd(g *Globals) *cobra.Command {
 			}
 			if _, err := time.ParseDuration(g.Timeout); err != nil {
 				return fmt.Errorf("invalid timeout %q: %w", g.Timeout, err)
+			}
+			// limit 校验：负数拒绝（exit 10）。0 和未设置都表示"用默认 cap"，
+			// 不拒绝。超大 limit（>1_000_000）给 stderr 警告但不拒绝，用户可能真需要。
+			if g.Limit < 0 {
+				return fmt.Errorf("%w: limit must be >= 0", config.ErrConfig)
+			}
+			if g.Limit > 1_000_000 {
+				fmt.Fprintf(g.eout, "mysql-cli: WARN large limit (%d) may cause memory pressure\n", g.Limit)
 			}
 			return nil
 		},
@@ -124,7 +152,10 @@ func newRootCmd(g *Globals) *cobra.Command {
 			return err
 		}
 		defer pool.Close()
-		code := repl.Start(repl.Config{Pool: pool, Opts: g.opts(), Out: g.out, Format: g.Format})
+		code := repl.Start(repl.Config{
+		Pool: pool, Opts: g.opts(), Out: g.out, Format: g.Format,
+		DefaultCap: g.defaultCap(),
+	})
 		if code == 0 {
 			return nil
 		}
