@@ -148,6 +148,17 @@ function escapeRegex(s: string): string {
 }
 
 /**
+ * True if the token list carries a write gate flag, as whole tokens or in
+ * pflag's `--flag=value` form (`--write=true`). Exact-token matching alone
+ * would let `--write=true` slip through the guard as a "read".
+ */
+function hasWriteFlag(tokens: string[]): boolean {
+  return tokens.some(
+    (t) => WRITE_FLAGS.some((f) => t === f || t.startsWith(f + "=")),
+  );
+}
+
+/**
  * True if the command runs mysql-cli with a write gate flag. Mirrors
  * `_is_mysql_cli_write` in the Python guard.
  */
@@ -158,7 +169,7 @@ function isMysqlCliWrite(command: string): boolean {
     // cmd 是 basename 后的结果，已剥掉目录；endsWith("/mysql-cli") 在 basename
     // 后永远为 false（原代码冗余，已清理）。只比较 === "mysql-cli"。
     const isMysql = cmd === "mysql-cli";
-    if (isMysql && WRITE_FLAGS.some((f) => tokens.includes(f))) return true;
+    if (isMysql && hasWriteFlag(tokens)) return true;
   }
   // Fallback: 仅在 splitShellTokens 解析失败时触发（极罕见，通常是未闭合引号）。
   // 收紧 mysql-cli 的前边界到 ^ 或空白，避免 `echo "mysql-cli --write"` 这类
@@ -166,9 +177,10 @@ function isMysqlCliWrite(command: string): boolean {
   // 算边界，导致引号内的 mysql-cli 字面量被误判为调用）。
   // 权衡：会漏掉 `bash -c "mysql-cli ... --write"` 这种 wrapped 调用——但仅在
   // splitShellTokens 失败时才漏；正常时走上面的 token 化路径会正确识别。
+  // lookahead 同时接受 `=`，覆盖 `--write=true`（pflag 的 --flag=value 形式）。
   if (/(?:^|\s)mysql-cli\b/.test(command)) {
     for (const flag of WRITE_FLAGS) {
-      const re = new RegExp(`(?:^|\\s)${escapeRegex(flag)}(?=[\\s"'\\';|&]|$)`);
+      const re = new RegExp(`(?:^|\\s)${escapeRegex(flag)}(?=[\\s"'\\';|&=]|$)`);
       if (re.test(command)) return true;
     }
   }

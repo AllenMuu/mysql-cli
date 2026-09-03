@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Codex PermissionRequest hook 收紧自动放行范围：新增子命令白名单（`query`/`schema`/`sample`/`tables`/`databases`/`read`/`explore`/`analyze`/`version`），`mysql-cli agent`/`config`（写本地文件）、`txn`（CLI 层强制 `--write`）、裸 `mysql-cli`（交互 REPL）不再被静默放行；带值持久 flag（`-d`/`--format` 等）的取值不会被误判为子命令。文档补充绝对路径调用绕过 Rules 粗门的已知缺口，并记录已核验的 Codex hooks schema（codex-cli 0.153.0 官方文档）。
+
 ## [2.1.0] - 2026-08-12
 
 ### Added
