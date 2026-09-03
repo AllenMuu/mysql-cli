@@ -1,6 +1,7 @@
 package conn
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,11 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
+
+// remoteDialTimeout 是 accept 循环内每条转发连接的远端拨号超时。SSH 半开
+// 连接时远端拨号可能永久阻塞，必须用带超时的 DialContext 兜底，否则整个
+// accept 循环 goroutine 会挂死且无法恢复。
+const remoteDialTimeout = 30 * time.Second
 
 // tunnelHook is overridable for testing. The returned io.Closer releases the
 // underlying SSH client and local listener so callers (e.g. Pool.Close) can
@@ -109,13 +115,18 @@ func establishTunnel(cfg *config.SSHConfig, connectTimeout int) (string, int, io
 		remotePort = 3306
 	}
 	localPort := cfg.LocalPort
-	if localPort == 0 {
-		localPort = 3330
-	}
 	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", localPort))
 	if err != nil {
 		client.Close()
 		return "", 0, nil, fmt.Errorf("local listen: %w", err)
+	}
+	if localPort == 0 {
+		// 未显式配置 local_port：由内核分配临时端口。固定端口（历史默认
+		// 3330）会让同一机器上第二个未配置端口的实例直接 address already
+		// in use 失败；临时端口天然并发安全。显式配置的 local_port 行为不变。
+		if addr, ok := listener.Addr().(*net.TCPAddr); ok {
+			localPort = addr.Port
+		}
 	}
 	go func() {
 		for {
@@ -124,7 +135,12 @@ func establishTunnel(cfg *config.SSHConfig, connectTimeout int) (string, int, io
 				log.Printf("ssh tunnel: listener closed: %v", err)
 				return
 			}
-			remote, err := client.Dial("tcp", fmt.Sprintf("%s:%d", remoteHost, remotePort))
+			// 远端拨号必须带超时：client.Dial 内部用 context.Background()，
+			// SSH 半开连接时会永久阻塞，把整个 accept 循环挂死。拨号失败只
+			// 关闭该条本地连接并继续循环，不影响后续连接。
+			dialCtx, cancel := context.WithTimeout(context.Background(), remoteDialTimeout)
+			remote, err := client.DialContext(dialCtx, "tcp", fmt.Sprintf("%s:%d", remoteHost, remotePort))
+			cancel()
 			if err != nil {
 				log.Printf("ssh tunnel: remote dial %s:%d failed: %v", remoteHost, remotePort, err)
 				local.Close()

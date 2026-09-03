@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-
 func TestCSV(t *testing.T) {
 	r := result.Result{Columns: []string{"id", "name"}, Rows: [][]any{{1, "a"}, {nil, "b"}}}
 	out, err := Format(r, "csv")
@@ -84,8 +83,10 @@ func TestReadJSONOmitsRowsAffectedAndAddsMeta(t *testing.T) {
 	r := result.Result{Columns: []string{"id"}, Rows: [][]any{{1}}, Truncated: true}
 	out := ReadJSON(r, 1000)
 	var env struct {
-		Success      bool           `json:"success"`
-		Data         struct{ Rows [][]any `json:"rows"` } `json:"data"`
+		Success bool `json:"success"`
+		Data    struct {
+			Rows [][]any `json:"rows"`
+		} `json:"data"`
 		RowsAffected *int           `json:"rows_affected"` // pointer: nil when absent
 		Meta         map[string]any `json:"meta"`
 	}
@@ -101,4 +102,30 @@ func TestJSONL(t *testing.T) {
 	out, err := Format(r, "jsonl")
 	assert.NoError(t, err)
 	assert.Equal(t, `{"id":1,"name":"a"}`+"\n"+`{"id":null,"name":"b"}`+"\n", out)
+}
+
+// TestJSONLDuplicateColumnNames 验证 A7：JOIN 同名列（SELECT u.id, o.id）
+// 组装 map 时后者不能静默覆盖前者，重复列名从第二个开始加 _2 后缀。
+func TestJSONLDuplicateColumnNames(t *testing.T) {
+	r := result.Result{Columns: []string{"id", "name", "id"}, Rows: [][]any{{1, "a", 2}}}
+	out, err := Format(r, "jsonl")
+	assert.NoError(t, err)
+	assert.Equal(t, `{"id":1,"id_2":2,"name":"a"}`+"\n", out)
+}
+
+// TestJSONLTripleDuplicateColumnNames 三重复：id / id_2 / id_3。
+func TestJSONLTripleDuplicateColumnNames(t *testing.T) {
+	r := result.Result{Columns: []string{"id", "id", "id"}, Rows: [][]any{{1, 2, 3}}}
+	out, err := Format(r, "jsonl")
+	assert.NoError(t, err)
+	assert.Equal(t, `{"id":1,"id_2":2,"id_3":3}`+"\n", out)
+}
+
+// TestJSONLDuplicateSkipsExistingName 生成后缀时跳过已被真实列名占用的
+// 候选名：列 [id, id_2, id] 的第三个 id 应得到 id_3 而不是与真列撞车。
+func TestJSONLDuplicateSkipsExistingName(t *testing.T) {
+	r := result.Result{Columns: []string{"id", "id_2", "id"}, Rows: [][]any{{1, 2, 3}}}
+	out, err := Format(r, "jsonl")
+	assert.NoError(t, err)
+	assert.Equal(t, `{"id":1,"id_2":2,"id_3":3}`+"\n", out)
 }

@@ -147,12 +147,25 @@ func formatTable(r result.Result) string {
 }
 
 func formatJSONL(r result.Result) (string, error) {
+	// JOIN 同名列（SELECT u.id, o.id）不能用原始列名组装 map，否则后者
+	// 静默覆盖前者。重复列名从第二个开始加 _2/_3... 后缀；候选名已被
+	// 占用时继续递增，避免与真实存在的 "id_2" 列再撞车。
+	keys := make([]string, len(r.Columns))
+	used := make(map[string]bool, len(r.Columns))
+	for i, c := range r.Columns {
+		key := c
+		for n := 2; used[key]; n++ {
+			key = fmt.Sprintf("%s_%d", c, n)
+		}
+		used[key] = true
+		keys[i] = key
+	}
 	var buf bytes.Buffer
 	for _, row := range r.Rows {
 		obj := make(map[string]any, len(row))
 		for i, c := range row {
-			if i < len(r.Columns) {
-				obj[r.Columns[i]] = c
+			if i < len(keys) {
+				obj[keys[i]] = c
 			}
 		}
 		b, err := json.Marshal(obj)

@@ -31,6 +31,24 @@ function doInstall(bundled, dir) {
   return dest;
 }
 
+// signalNumber maps a close-callback signal name ('SIGTERM') to its number
+// via os.constants.signals, or null for unknown/absent signals.
+function signalNumber(name) {
+  if (!name) return null;
+  const signals = os.constants.signals;
+  return Object.prototype.hasOwnProperty.call(signals, name) ? signals[name] : null;
+}
+
+// exitCodeForClose follows the shell convention: a child killed by a signal
+// exits with 128 + signal number; otherwise the child's code (1 if unknown).
+function exitCodeForClose(code, signal) {
+  if (signal) {
+    const num = signalNumber(signal);
+    return num == null ? 1 : 128 + num;
+  }
+  return code == null ? 1 : code;
+}
+
 // main: `install` -> copy to persistent dir; anything else -> spawn Go binary.
 function main(argv, bundledDir) {
   bundledDir = bundledDir || __dirname;
@@ -59,11 +77,17 @@ function main(argv, bundledDir) {
     return 1;
   }
   const child = spawn(bundled, argv, { stdio: 'inherit' });
+  // Forward termination signals to the child so killing the shim doesn't
+  // leave an orphaned Go process running. The shim then exits via 'close'
+  // with the 128+signal convention below.
+  ['SIGINT', 'SIGTERM', 'SIGHUP'].forEach((sig) => {
+    process.on(sig, () => child.kill(sig));
+  });
   child.on('error', (err) => {
     console.error(`mysql-cli: failed to spawn binary: ${err.message}`);
     process.exit(1);
   });
-  child.on('close', (code) => process.exit(code == null ? 1 : code));
+  child.on('close', (code, signal) => process.exit(exitCodeForClose(code, signal)));
   return undefined; // exit handled by child 'close' handler
 }
 
@@ -72,4 +96,4 @@ if (require.main === module) {
   if (code !== undefined) process.exit(code);
 }
 
-module.exports = { bundledBinPath, persistentDir, doInstall, main };
+module.exports = { bundledBinPath, persistentDir, doInstall, signalNumber, exitCodeForClose, main };

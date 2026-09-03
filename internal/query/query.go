@@ -42,7 +42,7 @@ func Execute(ctx context.Context, pool *conn.Pool, sqlText string, opts Options)
 	if safety.HasMultiStatement(sqlText) {
 		return result.Empty(), ErrMultiStatement
 	}
-	if _, err := safety.Check(sqlText, safety.CheckOptions{Yes: opts.Yes}); err != nil {
+	if _, err := safety.Check(sqlText, safety.CheckOptions{Write: opts.Write, DDL: opts.DDL, Yes: opts.Yes}); err != nil {
 		return result.Empty(), fmt.Errorf("%w: %w", ErrGuard, err)
 	}
 
@@ -65,6 +65,11 @@ func Execute(ctx context.Context, pool *conn.Pool, sqlText string, opts Options)
 
 	res, err := result.ScanRows(rows)
 	if err != nil {
+		// 扫描阶段（rows.Next/Scan/rows.Err）的超时与 QueryContext 超时
+		// 同样包装 ErrTimeout（exit 9），而非 ErrSQL（exit 8）。
+		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+			return result.Empty(), fmt.Errorf("%w: %w", ErrTimeout, err)
+		}
 		return result.Empty(), fmt.Errorf("%w: %w", ErrSQL, err)
 	}
 	if opts.Probe && opts.Limit > 0 && selectRe.MatchString(sqlText) && len(res.Rows) > opts.Limit {
@@ -96,8 +101,10 @@ func applyLimit(sqlText string, limit int, probe bool) string {
 var ownLimitRe = regexp.MustCompile(`(?i)\bLIMIT\b\s+\d+`)
 
 // hasLimitClause reports whether sqlText appears to already contain a LIMIT clause.
-// It is a simple regex heuristic: LIMIT inside a string literal will be
-// false-matched. Callers that need perfect SQL parsing should not rely on this.
+// It is a heuristic regex match, but performed on safety.StripLiterals(sqlText)
+// so that LIMIT inside a string literal (WHERE msg='... LIMIT 10 ...') no
+// longer disables the default row cap. Callers that need perfect SQL parsing
+// should not rely on this.
 func hasLimitClause(sqlText string) bool {
-	return ownLimitRe.MatchString(sqlText)
+	return ownLimitRe.MatchString(safety.StripLiterals(sqlText))
 }
