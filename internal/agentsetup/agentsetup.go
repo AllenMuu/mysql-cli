@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 //go:embed templates/mysql-write-guard.py
@@ -81,16 +82,20 @@ const (
 type step struct {
 	path     string
 	action   fileAction
-	content  []byte          // for writeFile / copyScript
-	fragment map[string]any  // for mergeJSON
+	content  []byte         // for writeFile / copyScript
+	fragment map[string]any // for mergeJSON
 }
 
 // Agent is one supported AI agent.
 type Agent struct {
-	Name  string
-	Desc  string
-	Cap   Capability
-	steps func(InstallOpts) ([]step, error) // err = scope unsupported / unusable
+	Name string
+	Desc string
+	Cap  Capability
+	// posixHook marks agents whose hook command depends on POSIX shell
+	// expansion ($HOME, ${VAR:-default}) and a python3 executable; those do
+	// not work on native Windows (see windowsIncompatWarning).
+	posixHook bool
+	steps     func(InstallOpts) ([]step, error) // err = scope unsupported / unusable
 }
 
 // Agents is the ordered registry of supported agents.
@@ -121,6 +126,9 @@ func (a Agent) Install(opts InstallOpts) ([]string, error) {
 	if a.steps == nil {
 		return nil, fmt.Errorf("agent %q has no install steps", a.Name)
 	}
+	if msg := windowsIncompatWarning(runtime.GOOS, a); msg != "" {
+		fmt.Fprintln(os.Stderr, msg)
+	}
 	steps, err := a.steps(opts)
 	if err != nil {
 		return nil, err
@@ -136,6 +144,24 @@ func (a Agent) Install(opts InstallOpts) ([]string, error) {
 		}
 	}
 	return written, nil
+}
+
+// windowsIncompatWarning returns a stderr warning ("" when fine) for agents
+// whose hook command relies on POSIX-only features: native Windows shells do
+// not expand $HOME or ${VAR:-default}, and python3 is usually absent, so the
+// hook would silently fail to run and the write guard would be inactive. We
+// still install the files (the agent may run under WSL/Git-Bash where they
+// work), but never silently.
+func windowsIncompatWarning(goos string, a Agent) string {
+	if goos != "windows" || !a.posixHook {
+		return ""
+	}
+	return fmt.Sprintf(
+		"warning: %s's hook command relies on POSIX shell expansion ($HOME, ${VAR:-...}) and python3; "+
+			"on native Windows it will likely fail to run and the mysql-cli write guard will be inactive. "+
+			"Prefer running this agent under WSL/Git-Bash.",
+		a.Name,
+	)
 }
 
 func execStep(s step, opts InstallOpts) (string, error) {
@@ -154,7 +180,7 @@ func execStep(s step, opts InstallOpts) (string, error) {
 		if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 			return "", err
 		}
-		if err := os.WriteFile(s.path, s.content, 0o644); err != nil {
+		if err := writeFileAtomic(s.path, s.content, 0o644); err != nil {
 			return "", err
 		}
 		return s.path, nil
@@ -167,7 +193,7 @@ func execStep(s step, opts InstallOpts) (string, error) {
 		if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 			return "", err
 		}
-		if err := os.WriteFile(s.path, s.content, 0o755); err != nil {
+		if err := writeFileAtomic(s.path, s.content, 0o755); err != nil {
 			return "", err
 		}
 		return s.path, nil
@@ -177,26 +203,57 @@ func execStep(s step, opts InstallOpts) (string, error) {
 	return "", fmt.Errorf("unknown action %d", s.action)
 }
 
+// writeFileAtomic durably replaces path with data: it writes a temp file in
+// the same directory, applies mode, then renames over the target. A crash
+// mid-write can only lose the temp file, never truncate the target (agents
+// parse these JSON files at startup; a half-written file would break them).
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".agentsetup-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		tmp.Close()        // no-op when already closed
+		os.Remove(tmpName) // no-op after a successful rename
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
 // mergeJSONFile reads path (if present), deep-merges fragment into it (or
 // starts from fragment if absent), backs up the original to .bak, and writes
 // the result. Returns the path written.
 //
-// 备份文件 .bak 沿用原文件的 mode（如原文件是 0600，备份也是 0600），避免硬编码
-// 0644 把其他用户可读权限泄漏到备份里。新写的目标文件保持 0644（JSON 配置文件
-// 常见权限；若需更严，调用方应在 install 后自行 chmod）。
+// 备份与合并后的目标文件都沿用原文件的 mode（如原文件是 0600，备份与结果也是
+// 0600），避免硬编码 0644 把 opencode.json 等可能内嵌 API key 的文件变成同机
+// 其他用户可读。.bak 只在不存在时写入：重复运行 agent init 不得把"已合并过"
+// 的内容覆盖进唯一备份，否则用户最初的手工配置永久丢失。所有写入走
+// writeFileAtomic（同目录临时文件 + rename），崩溃不会留下截断的 JSON。
 func mergeJSONFile(path string, fragment map[string]any) (string, error) {
 	var existing map[string]any
+	targetMode := os.FileMode(0o644)
 	if data, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(data, &existing); err != nil {
 			return "", fmt.Errorf("parse %s: %w", path, err)
 		}
-		// 取原文件 mode 写备份，避免把 0600 文件备份成 0644 泄漏给同机其他用户。
-		bakMode := os.FileMode(0o644)
 		if info, err := os.Stat(path); err == nil {
-			bakMode = info.Mode().Perm()
+			targetMode = info.Mode().Perm()
 		}
-		if err := os.WriteFile(path+".bak", data, bakMode); err != nil {
-			return "", err
+		// Only create the backup when none exists yet, so .bak always holds
+		// the pristine pre-install original instead of an already-merged copy.
+		if _, err := os.Stat(path + ".bak"); os.IsNotExist(err) {
+			if err := writeFileAtomic(path+".bak", data, targetMode); err != nil {
+				return "", err
+			}
 		}
 	}
 	dst := existing
@@ -211,7 +268,7 @@ func mergeJSONFile(path string, fragment map[string]any) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
+	if err := writeFileAtomic(path, append(out, '\n'), targetMode); err != nil {
 		return "", err
 	}
 	return path, nil
@@ -219,7 +276,8 @@ func mergeJSONFile(path string, fragment map[string]any) (string, error) {
 
 // deepMerge merges src into dst (mutating dst). Maps recurse; for slices, dst
 // keeps its elements and appends src elements not already present (dedup by
-// JSON serialization). Scalars in src overwrite dst.
+// JSON serialization, except hook-group arrays which use business-key
+// replacement, see mergeLists). Scalars in src overwrite dst.
 func deepMerge(dst, src map[string]any) {
 	for k, sv := range src {
 		dv, ok := dst[k]
@@ -235,12 +293,110 @@ func deepMerge(dst, src map[string]any) {
 		}
 		if ss, sok := sv.([]any); sok {
 			if ds, dok := dv.([]any); dok {
-				dst[k] = dedupAppend(ds, ss)
+				dst[k] = mergeLists(ds, ss)
 				continue
 			}
 		}
 		dst[k] = sv
 	}
+}
+
+// mergeLists merges src array items into dst. Hook-group arrays (our
+// PreToolUse fragments) use business-key replacement so a re-install UPDATES
+// the entry we previously installed instead of appending a near-duplicate
+// after the user tweaked it (e.g. changed a timeout) -- exact-JSON dedup alone
+// would treat the tweaked copy as foreign and stack a second entry, causing
+// double confirmation prompts. Everything else dedups by JSON serialization
+// via dedupAppend.
+func mergeLists(dst, src []any) []any {
+	if len(src) > 0 && allHookGroups(src) {
+		return mergeHookGroups(dst, src)
+	}
+	return dedupAppend(dst, src)
+}
+
+// allHookGroups reports whether every item is a PreToolUse-style hook group
+// (an object carrying both "matcher" and "hooks").
+func allHookGroups(items []any) bool {
+	for _, v := range items {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return false
+		}
+		if _, ok := m["matcher"]; !ok {
+			return false
+		}
+		if _, ok := m["hooks"]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// hookGuardMarker is the command signature of the guard scripts this package
+// installs; hook entries whose command references it are "ours" (even after
+// user tweaks).
+const hookGuardMarker = "mysql-write-guard"
+
+// carriesOurHook reports whether a hook group's command list references the
+// guard script we install.
+func carriesOurHook(group map[string]any) bool {
+	hooks, ok := group["hooks"].([]any)
+	if !ok {
+		return false
+	}
+	for _, h := range hooks {
+		hm, ok := h.(map[string]any)
+		if !ok {
+			continue
+		}
+		if cmd, _ := hm["command"].(string); strings.Contains(cmd, hookGuardMarker) {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeHookGroups merges our hook groups into dst: an existing group with the
+// same matcher that carries our guard script is REPLACED by the incoming one
+// (keeping its position); anything else is appended unless JSON-identical.
+func mergeHookGroups(dst, src []any) []any {
+	out := make([]any, len(dst))
+	copy(out, dst)
+	for _, s := range src {
+		sm, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+		matcher, _ := sm["matcher"].(string)
+		replaced := false
+		for i, d := range out {
+			dm, ok := d.(map[string]any)
+			if !ok {
+				continue
+			}
+			dmMatcher, _ := dm["matcher"].(string)
+			if dmMatcher == matcher && carriesOurHook(dm) {
+				out[i] = s
+				replaced = true
+				break
+			}
+		}
+		if !replaced && !containsCanon(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func containsCanon(items []any, v any) bool {
+	c := canon(v)
+	for _, it := range items {
+		if canon(it) == c {
+			return true
+		}
+	}
+	return false
 }
 
 // dedupAppend appends src items to dst, skipping any whose JSON serialization
@@ -275,6 +431,8 @@ var claudeCode = Agent{
 	Name: "claude",
 	Desc: "Claude Code (PreToolUse hook -> ask)",
 	Cap:  CapEnforce,
+	// hookCmd uses $HOME / ${CLAUDE_PROJECT_DIR:-$PWD} + python3 (POSIX only).
+	posixHook: true,
 	steps: func(o InstallOpts) ([]step, error) {
 		var base, hookCmd string
 		if o.Scope == ScopeGlobal {
@@ -326,9 +484,39 @@ var opencode = Agent{
 				},
 			},
 		}
+		// NOTE (C9): the broad allow rule and the ask rules coexist on purpose
+		// and depend on opencode's rule-evaluation semantics: rules are matched
+		// in object order and the LAST matching rule wins (verified against
+		// opencode's permission docs, https://opencode.ai/docs/permissions,
+		// 2026-09; the docs' recommended idiom is wildcard rules first,
+		// specific rules after). Go's encoding/json serializes map keys in
+		// sorted order, and "mysql-cli *" is a strict string prefix of the ask
+		// patterns, so the allow rule always lands BEFORE the ask rules in the
+		// written file and write/ddl/yes calls resolve to "ask". If opencode
+		// ever switches to first-match-wins or unordered semantics, this
+		// fragment must be re-verified.
 		return []step{{path: path, action: actionMergeJSON, fragment: frag}}, nil
 	},
 }
+
+// copilotAutoApprovePattern is the autoApprove regex Copilot consults before
+// auto-running a terminal command: any command mentioning mysql-cli followed
+// (anywhere after it, even across quoted SQL containing ;|&) by one of the
+// write flags forces a human confirmation prompt (value false).
+//
+// Design notes (C8):
+//   - Anchoring on `mysql-cli` avoids prompting for unrelated tools whose
+//     flags merely contain write/ddl/yes (e.g. `other-tool --write-cache`).
+//   - `.*?` deliberately crosses quotes and ;|& separators: SQL literals
+//     routinely contain `;`/`|`/`&`, so a `[^|;&]*` gap would silently miss
+//     plain writes like `mysql-cli query "UPDATE a; UPDATE b" --write` and
+//     wrapped writes like `bash -c "echo hi" ; mysql-cli --write`. Erring
+//     towards extra prompts is the safer failure mode.
+//   - `(=|[^\\w-]|$)` accepts the pflag `--write=true` form while rejecting
+//     longer flags such as `--write-cache` / `--yesman`.
+//   - `.` does not match newlines (JS regex); terminal commands agents run
+//     are single-line in practice.
+const copilotAutoApprovePattern = `/mysql-cli.*?--(write|ddl|yes)(=|[^\w-]|$)/`
 
 var copilot = Agent{
 	Name: "copilot",
@@ -342,22 +530,26 @@ var copilot = Agent{
 				action: actionWriteFile, content: []byte(copilotInstructions),
 			})
 		}
-		var settingsPath string
-		if o.Scope == ScopeGlobal {
-			p, err := vscodeUserSettings(o.Home)
-			if err != nil {
-				return nil, err
-			}
-			settingsPath = p
-		} else {
-			settingsPath = filepath.Join(o.ProjectDir, ".vscode", "settings.json")
-		}
 		frag := map[string]any{
 			"chat.tools.terminal.autoApprove": map[string]any{
-				"/--(write|ddl|yes)(\\b|=)/": false,
+				copilotAutoApprovePattern: false,
 			},
 		}
-		steps = append(steps, step{path: settingsPath, action: actionMergeJSON, fragment: frag})
+		if o.Scope == ScopeGlobal {
+			// C10: install into every VS Code edition present on the machine
+			// (stable "Code" and Insiders "Code - Insiders"); the returned
+			// paths (also under DryRun) tell the user which ones were hit.
+			// When neither exists (fresh machine), stable is targeted.
+			for _, p := range vscodeUserSettings(o.Home) {
+				steps = append(steps, step{path: p, action: actionMergeJSON, fragment: frag})
+			}
+			return steps, nil
+		}
+		steps = append(steps, step{
+			path:     filepath.Join(o.ProjectDir, ".vscode", "settings.json"),
+			action:   actionMergeJSON,
+			fragment: frag,
+		})
 		return steps, nil
 	},
 }
@@ -366,6 +558,8 @@ var codebuddy = Agent{
 	Name: "codebuddy",
 	Desc: "CodeBuddy (PreToolUse hook -> ask)",
 	Cap:  CapEnforce,
+	// hookCmd uses $HOME / ${CLAUDE_PROJECT_DIR:-$PWD} + python3 (POSIX only).
+	posixHook: true,
 	steps: func(o InstallOpts) ([]step, error) {
 		var base, hookCmd string
 		if o.Scope == ScopeGlobal {
@@ -385,6 +579,8 @@ var trae = Agent{
 	Name: "trae",
 	Desc: "TRAE (PreToolUse hook -> ask, Claude Code compatible)",
 	Cap:  CapEnforce,
+	// hookCmd uses $HOME / ${TRAE_PROJECT_DIR:-...} + python3 (POSIX only).
+	posixHook: true,
 	steps: func(o InstallOpts) ([]step, error) {
 		// TRAE's path layout is intentionally asymmetric (per official docs):
 		//   global  -> ~/.trae-cn/hooks.json         (note the "-cn" suffix)
@@ -478,14 +674,32 @@ func traeHookFragment(matcher, hookCmd string) map[string]any {
 	}
 }
 
-// vscodeUserSettings returns the VS Code User settings.json path for the OS.
-func vscodeUserSettings(home string) (string, error) {
+// vscodeUserSettings returns the VS Code User settings.json paths to install
+// into: every edition directory that exists on the machine (stable "Code" and
+// Insiders "Code - Insiders" -- C10: Insiders uses its own "Code - Insiders"
+// directory, not the stable one). When neither exists (fresh machine), the
+// stable path is returned so a first run still gets configured.
+func vscodeUserSettings(home string) []string {
+	var stable, insiders string
 	switch runtime.GOOS {
 	case "darwin":
-		return filepath.Join(home, "Library", "Application Support", "Code", "User", "settings.json"), nil
+		stable = filepath.Join(home, "Library", "Application Support", "Code", "User")
+		insiders = filepath.Join(home, "Library", "Application Support", "Code - Insiders", "User")
 	case "windows":
-		return filepath.Join(home, "AppData", "Roaming", "Code", "User", "settings.json"), nil
+		stable = filepath.Join(home, "AppData", "Roaming", "Code", "User")
+		insiders = filepath.Join(home, "AppData", "Roaming", "Code - Insiders", "User")
 	default: // linux & friends
-		return filepath.Join(home, ".config", "Code", "User", "settings.json"), nil
+		stable = filepath.Join(home, ".config", "Code", "User")
+		insiders = filepath.Join(home, ".config", "Code - Insiders", "User")
 	}
+	var paths []string
+	for _, dir := range []string{stable, insiders} {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			paths = append(paths, filepath.Join(dir, "settings.json"))
+		}
+	}
+	if len(paths) == 0 {
+		paths = []string{filepath.Join(stable, "settings.json")}
+	}
+	return paths
 }

@@ -14,20 +14,37 @@
  *
  * Read-only mysql-cli calls (no write flag) pass through silently.
  *
- * Detection mirrors `mysql-write-guard.py`:
- *   - shell-token matching: a flag-looking string inside a quoted SQL literal
- *     (e.g. "SELECT '--write' ...") stays one quoted token and is NOT mistaken
- *     for the flag.
- *   - regex fallback anchors flags as standalone tokens; the back boundary
- *     also allows quote/shell-separator close so `bash -c "mysql-cli ... --write"`
- *     is caught.
- *   - rtk / sudo / env / nohup / command prefixes are skipped when locating the cmd.
+ * Detection mirrors `mysql-write-guard.py` (both implementations are tested
+ * against the same matrix in hook_guard_test.go -- keep them behaviorally
+ * identical):
+ *   - The command is split on unquoted shell control characters (; & | ( )
+ *     and newlines) with shell comments dropped; each segment is analyzed
+ *     independently, so `ls; mysql-cli ...`, `(mysql-cli ...)` and
+ *     `cmd # trailing comment` are all handled.
+ *   - Token matching: a write flag counts only as a standalone token
+ *     (`--write`) or a `--flag=value` form (`--write=true`, `--ddl=1`), so a
+ *     flag-looking string inside a quoted SQL literal (e.g. "SELECT '--write'
+ *     ...") stays one token and is NOT mistaken for the flag.
+ *   - Wrapped invocations: `bash/sh/zsh -c "<script>"` payloads are analyzed
+ *     recursively (anywhere in the token list, covering `sudo bash -lc ...`
+ *     and `docker exec ... bash -c ...`), so `bash -c "mysql-cli ... --write"`
+ *     is caught, including multi-command payloads.
+ *   - Segments whose command word is echo/printf are skipped: their arguments
+ *     are data to print, not commands to run (`echo mysql-cli --write` does
+ *     not write).
+ *   - Locating the command skips rtk/sudo/env/nohup/command prefixes; a bare
+ *     `mysql-cli` token anywhere in the segment also counts, which covers
+ *     pass-through wrappers such as xargs/timeout and `env VAR=... mysql-cli`.
+ *   - If a segment cannot be tokenized (unclosed quote), a regex fallback
+ *     matches mysql-cli anchored at ^/whitespace/quote and the flag as a
+ *     standalone token or =value form.
  *   - Fail-open: any thrown error in the handler is swallowed so a buggy
  *     extension never blocks all bash usage.
  *
  * 覆盖范围限制：本 hook 仅拦截 agent 框架的 Bash/shell 执行路径。
  * agent 若通过非 Bash tool（如 Python subprocess、直接 exec 系统调用）调用 mysql-cli，
- * 不会触发本 hook。如需更强保障，应在 agent 配置中禁用非 Bash 执行路径，
+ * 或先把写调用写进已有脚本文件再执行（bash fix.sh），不会触发本 hook。
+ * 如需更强保障，应在 agent 配置中禁用非 Bash 执行路径，
  * 或依赖 mysql-cli 内部的退出码契约（写操作缺 --write/--ddl/--yes 时以 exit 3/4/5 拒绝）。
  *
  * Pi-specific notes:
@@ -45,6 +62,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const WRITE_FLAGS = ["--write", "--ddl", "--yes"];
 const PREFIXES = new Set(["rtk", "sudo", "env", "nohup", "command"]);
 const RTK_SUB = new Set(["proxy"]);
+const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash"]);
+// cmd words whose arguments are data, not commands
+const DATA_SINKS = new Set(["echo", "printf"]);
+const SEGMENT_SEPS = new Set([";", "&", "|", "(", ")", "\n"]);
+const MAX_DEPTH = 4; // `bash -c 'bash -c ...'` recursion guard
 
 /**
  * Tokenize a shell command string. Returns null on parse failure (unclosed
@@ -143,34 +165,144 @@ function commandWord(tokens: string[]): string {
   return "";
 }
 
+/** True if any token is exactly a write flag or a `--flag=value` form. */
+function hasWriteFlag(tokens: string[]): boolean {
+  return tokens.some((t) =>
+    WRITE_FLAGS.some((f) => t === f || t.startsWith(f + "=")),
+  );
+}
+
+/**
+ * Split on unquoted shell control characters (; & | ( ) newline) and drop
+ * shell comments (an unquoted # at the start of a word, extending to the end
+ * of the line -- text inside comments never splits segments, so
+ * `# note; mysql-cli --write` stays one inert comment). Quotes stay intact so
+ * each segment remains independently analyzable; backslash escapes are
+ * honored so `\;` never splits. Mirrors `_split_segments` in the Python guard.
+ */
+function splitShellSegments(command: string): string[] {
+  const segments: string[] = [];
+  let cur = "";
+  let inSingle = false;
+  let inDouble = false;
+  let i = 0;
+  while (i < command.length) {
+    const c = command[i];
+    if (inSingle) {
+      cur += c;
+      if (c === "'") inSingle = false;
+    } else if (inDouble) {
+      if (c === "\\" && i + 1 < command.length) {
+        cur += c + command[i + 1];
+        i++;
+      } else {
+        cur += c;
+        if (c === '"') inDouble = false;
+      }
+    } else {
+      if (c === "\\" && i + 1 < command.length) {
+        cur += c + command[i + 1];
+        i++;
+      } else if (c === "'") {
+        inSingle = true;
+        cur += c;
+      } else if (c === '"') {
+        inDouble = true;
+        cur += c;
+      } else if (c === "#" && (i === 0 || " \t;|&()\n".includes(command[i - 1]))) {
+        // comment: consume through end of line; the newline itself is then
+        // re-processed as a segment separator
+        const nl = command.indexOf("\n", i);
+        i = nl === -1 ? command.length - 1 : nl - 1;
+      } else if (SEGMENT_SEPS.has(c)) {
+        segments.push(cur);
+        cur = "";
+      } else {
+        cur += c;
+      }
+    }
+    i++;
+  }
+  segments.push(cur);
+  return segments.map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+/**
+ * Return the script string of a `shell -c <script>` invocation, scanning for
+ * shell tokens anywhere in the list (covers `sudo bash -c ...`, `docker exec
+ * ... bash -c ...`). Combined short options ending in c (bash -lc) are
+ * recognized. Only the token right after -c is the script; later tokens are
+ * positional parameters ($0, $1, ...), not more script. Mirrors
+ * `_shell_c_payload` in the Python guard.
+ */
+function shellCPayload(tokens: string[]): string | null {
+  for (let i = 0; i < tokens.length - 1; i++) {
+    if (!SHELLS.has(basename(tokens[i]))) continue;
+    let j = i + 1;
+    while (j < tokens.length) {
+      const opt = tokens[j];
+      if (opt === "--") break; // end of options: script-file form
+      const isC =
+        opt === "-c" ||
+        (opt.length > 1 &&
+          opt.startsWith("-") &&
+          !opt.startsWith("--") &&
+          opt.endsWith("c"));
+      if (isC) return j + 1 < tokens.length ? tokens[j + 1] : null;
+      if (opt.startsWith("-")) {
+        j++;
+        continue;
+      }
+      break; // first non-option token: script-file form
+    }
+  }
+  return null;
+}
+
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
- * True if the command runs mysql-cli with a write gate flag. Mirrors
- * `_is_mysql_cli_write` in the Python guard.
+ * Last-resort regex for segments the tokenizer cannot parse (unclosed
+ * quotes): mysql-cli must start at ^/whitespace/quote (so wrapped
+ * `bash -c "mysql-cli ..."` still matches), and the flag must be a standalone
+ * token or =value form. Err on the side of blocking here. Mirrors
+ * `_regex_mysql_cli_write` in the Python guard -- the character classes are
+ * intentionally identical.
  */
-function isMysqlCliWrite(command: string): boolean {
-  const tokens = splitShellTokens(command);
-  if (tokens) {
-    const cmd = commandWord(tokens);
-    // cmd 是 basename 后的结果，已剥掉目录；endsWith("/mysql-cli") 在 basename
-    // 后永远为 false（原代码冗余，已清理）。只比较 === "mysql-cli"。
-    const isMysql = cmd === "mysql-cli";
-    if (isMysql && WRITE_FLAGS.some((f) => tokens.includes(f))) return true;
-  }
-  // Fallback: 仅在 splitShellTokens 解析失败时触发（极罕见，通常是未闭合引号）。
-  // 收紧 mysql-cli 的前边界到 ^ 或空白，避免 `echo "mysql-cli --write"` 这类
-  // 把 mysql-cli 当字符串字面量传给其他命令的误报（原 \b 把 "-mysql-cli" 也
-  // 算边界，导致引号内的 mysql-cli 字面量被误判为调用）。
-  // 权衡：会漏掉 `bash -c "mysql-cli ... --write"` 这种 wrapped 调用——但仅在
-  // splitShellTokens 失败时才漏；正常时走上面的 token 化路径会正确识别。
-  if (/(?:^|\s)mysql-cli\b/.test(command)) {
-    for (const flag of WRITE_FLAGS) {
-      const re = new RegExp(`(?:^|\\s)${escapeRegex(flag)}(?=[\\s"'\\';|&]|$)`);
-      if (re.test(command)) return true;
+function regexMysqlCliWrite(segment: string): boolean {
+  if (!/(?:^|[\s"'])mysql-cli\b/.test(segment)) return false;
+  return WRITE_FLAGS.some((f) => {
+    const re = new RegExp(`(?:^|[\\s"'])${escapeRegex(f)}(?=[\\s"';|&=]|$)`);
+    return re.test(segment);
+  });
+}
+
+/**
+ * True if the command runs mysql-cli with a write gate flag. Mirrors
+ * `_is_mysql_cli_write` in the Python guard. Exported for the shared
+ * detection-matrix tests (hook_guard_test.go).
+ */
+export function isMysqlCliWrite(command: string, depth = 0): boolean {
+  if (depth >= MAX_DEPTH) return false;
+  for (const segment of splitShellSegments(command)) {
+    const tokens = splitShellTokens(segment);
+    if (tokens === null) {
+      if (regexMysqlCliWrite(segment)) return true;
+      continue;
     }
+    const cmd = commandWord(tokens);
+    if (DATA_SINKS.has(cmd)) {
+      // echo/printf merely print their arguments; `echo mysql-cli --write`
+      // is display text, not an invocation.
+      continue;
+    }
+    if ((cmd === "mysql-cli" || tokens.includes("mysql-cli")) && hasWriteFlag(tokens)) {
+      return true;
+    }
+    const payload = shellCPayload(tokens);
+    if (payload && isMysqlCliWrite(payload, depth + 1)) return true;
   }
   return false;
 }
@@ -205,6 +337,18 @@ export default function (pi: ExtensionAPI): void {
     } catch (e) {
       // Fail-open: never let a bug in the guard block all bash usage. Log to
       // stderr if available, otherwise stay silent.
+      //
+      // NOTE (intentional asymmetry, kept as designed): when ctx.ui exists
+      // but ctx.ui.confirm() throws, we fail OPEN (allow); when there is no
+      // UI at all we fail CLOSED (block, see above). Rationale: a throw from
+      // confirm() means the extension/UI layer itself is buggy -- failing
+      // closed here would take down ALL bash usage for the session, which is
+      // the one outcome worse than letting a flagged write slip through
+      // (mysql-cli's own exit-code gate still refuses writes that lack
+      // --write/--ddl/--yes, so the blast radius of one slipped call is a
+      // failed command, not silent corruption). A missing UI, by contrast,
+      // is an expected non-interactive context where silently auto-approving
+      // database writes is exactly the risk this extension exists to prevent.
       if (ctx?.ui?.log) {
         try {
           ctx.ui.log(`mysql-write-guard: *** WARNING *** fail-open (confirmation bypassed) due to exception: ${String(e)}`);
