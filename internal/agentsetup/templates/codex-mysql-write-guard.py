@@ -12,6 +12,9 @@ can PROVE is a read-only mysql-cli invocation:
   shlex parse failure                    -> no decision
   any shell syntax                       -> no decision
   mysql-cli with --write/--ddl/--yes     -> no decision  (human approval)
+  mysql-cli agent/config/txn or no       -> no decision  (human approval:
+    subcommand at all                       writes local files / requires
+                                             --write / interactive REPL)
   mysql-cli read-only, single command    -> allow        (skip the prompt)
 
 "no decision" = exit 0 with empty stdout: Codex then runs its normal approval
@@ -36,6 +39,15 @@ Detection notes (shared semantics with the Claude PreToolUse guard):
   and backslash are still treated as uncertain because they expand or escape.
 - rtk / sudo / env / nohup / command prefixes are skipped when locating the
   command; `env VAR=... mysql-cli` cannot be proven and stays unapproved.
+- Subcommand whitelist: only known read-only subcommands (query / schema /
+  sample / tables / databases / read / explore / analyze / version) are
+  auto-allowed. `agent` and `config` write local files (hooks, rules, trust
+  state -- fixed content, but not a read), `txn` requires --write at CLI
+  level, and a bare `mysql-cli` opens the interactive REPL: all stay
+  unapproved. Value-taking persistent flags (-d/--format/...) are skipped
+  when locating the subcommand so their values are not mistaken for it;
+  an unknown flag is treated as boolean, which at worst misidentifies the
+  subcommand and fails the whitelist -- fail-to-prompt, never fail-open.
 
 覆盖范围限制（Codex 特有，详见 docs/agent-integration.md）：
 - PermissionRequest 仅在 Codex 原本准备发起 approval 时运行，不会为
@@ -53,6 +65,21 @@ import sys
 WRITE_FLAGS = ("--write", "--ddl", "--yes")
 PREFIXES = {"rtk", "sudo", "env", "nohup", "command"}
 RTK_SUB = {"proxy"}  # `rtk proxy <cmd>` form
+# Subcommands provable as read-only (help.go's inspect group plus version).
+# agent/config write local files, txn requires --write, no-subcommand opens
+# the interactive REPL -- none of those are auto-allowed.
+READ_SUBCOMMANDS = frozenset({
+    "query", "schema", "sample", "tables", "databases",
+    "read", "explore", "analyze", "version",
+})
+# Persistent flags whose VALUE is the next token (root.go's StringVar/IntVar
+# registrations; short forms exist for -d/-f only). Needed so
+# `mysql-cli -d mydb query ...` is not misread as subcommand "mydb". Boolean
+# flags and --flag=value forms consume no separate token.
+VALUE_FLAGS = frozenset({
+    "-d", "--datasource", "-f", "--format", "--limit", "--timeout",
+    "--config", "--host", "--port", "--user", "--password", "--db",
+})
 # Characters permitted OUTSIDE quotes in a provable read-only command: word
 # characters, path/flag punctuation, and separators. Everything else -- shell
 # operators (;|&><), expansion ($ `), globs (*?[]), braces, ~, newlines,
@@ -93,6 +120,23 @@ def _has_write_flag(tokens):
     )
 
 
+def _subcommand(tokens, start):
+    """First non-flag token from start, skipping value flags' next-token values.
+
+    An unrecognized flag is assumed boolean; if it actually takes a value,
+    that value masquerades as the subcommand, fails the whitelist, and the
+    command stays unapproved -- wrong in the safe direction only.
+    """
+    i = start
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.startswith("-"):
+            i += 2 if tok in VALUE_FLAGS else 1
+            continue
+        return tok
+    return ""
+
+
 def _is_proven_mysql_cli_read(command):
     """True only if command is provably a single read-only mysql-cli call."""
     if not _is_provable_read(command):
@@ -117,6 +161,12 @@ def _is_proven_mysql_cli_read(command):
         return False  # first real command is not mysql-cli
     if _has_write_flag(tokens):
         return False  # write gate flag present -> human approval
+    sub = _subcommand(tokens, i + 1)
+    if sub not in READ_SUBCOMMANDS:
+        # agent/config (write local files), txn (requires --write), no
+        # subcommand (interactive REPL), or an unrecognized subcommand:
+        # not a proven read -> human approval.
+        return False
     return True
 
 

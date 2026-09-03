@@ -57,17 +57,18 @@ mysql-cli agent init --agents cursor --project --dry-run   # 预览不写
 Codex 没有 Claude 兼容的 PreToolUse `ask`（该决策被解析但**不支持**：hook 会被标记为 failed 且 tool call **继续执行**），所以**不能**把 `mysql-write-guard.py` 原样装给 Codex。mysql-cli 采用两层组合：
 
 1. **Rules 粗门**（`.codex/rules/mysql-cli-write-guard.rules`）：`prefix_rule(pattern=["mysql-cli"], decision="prompt")` 把每条 mysql-cli 调用（含 `rtk`/`rtk proxy`/`sudo`/`command`/`nohup` 包装前缀）路由进 Codex 审批路径。`prefix_rule` 只做有序前缀 token 匹配，无法表达“任意位置的 `--write`”，所以规则只负责粗门，不判断读写。
-2. **PermissionRequest hook 精过滤**（`.codex/hooks/mysql-write-guard.py` + `hooks.json`）：仅在 Codex 准备发起审批时运行。已证明只读的 mysql-cli 调用返回 `allow`（跳过弹窗）；写 flag 命令、复合命令（管道/`;`/`&&`）、重定向、命令替换、解析失败——一律**不做决策**（exit 0 + 空 stdout），保持 Codex 原生人类审批框。失败方向是 fail-to-prompt：宁可多弹一次窗，绝不静默放行写操作。
+2. **PermissionRequest hook 精过滤**（`.codex/hooks/mysql-write-guard.py` + `hooks.json`）：仅在 Codex 准备发起审批时运行。已证明只读的 mysql-cli 调用（白名单子命令：`query`/`schema`/`sample`/`tables`/`databases`/`read`/`explore`/`analyze`/`version`）返回 `allow`（跳过弹窗）；写 flag 命令、复合命令（管道/`;`/`&&`）、重定向、命令替换、解析失败——一律**不做决策**（exit 0 + 空 stdout），保持 Codex 原生人类审批框。非只读子命令也不放行：`agent`/`config` 会写本地文件（hook/规则/信任状态）、`txn` 在 CLI 层强制 `--write`、裸 `mysql-cli` 进入交互 REPL。失败方向是 fail-to-prompt：宁可多弹一次窗，绝不静默放行写操作。
 
 已知边界（不宣称与 Claude `PreToolUse -> ask` 100% 等价）：
 
 - `env VAR=... mysql-cli ...` 无法用前缀模式表达，不进 Rules 粗门（hook 侧同样无法证明，保持原生审批）；
+- 绝对路径调用（如 `/usr/local/bin/mysql-cli ...`、`$GOBIN/mysql-cli ...`）不匹配任何前缀模式，不进 Rules 粗门，PermissionRequest hook 也不会为其触发——退化为 Codex 原生审批策略 + CLI 内部退出码契约兜底（写操作缺 `--write`/`--ddl`/`--yes` 时 exit 3/4/5 拒绝）；
 - 复杂 shell 嵌套（如 `bash -c "mysql-cli ... --write"`）不保证被 rules 引擎拆分评估；
 - PermissionRequest 只在 Codex 原本准备发起 approval 时触发；`approval_policy=never` 等特殊模式下 prompt 规则会导致拒绝（安全方向，非静默放行）；
 - hooks 被关闭、project 未 trust、hook 未 trust、rules 未加载、`bypassPermissions` 等情形下不生效；
 - 项目级 hooks/rules 仅在用户 trust 项目 `.codex` 层后加载——`agent init` **不会自动 trust**（人工信任边界是安全设计的一部分）。
 
-Codex 官方定位 tool hooks 为 useful guardrail 而非完整 security boundary；兜底仍有 mysql-cli 内部退出码契约（写操作缺 `--write`/`--ddl`/`--yes` 时 exit 3/4/5 拒绝）。Rules 语法与 hooks 协议见 [Codex Execution Policy](https://developers.openai.com/codex/exec-policy) 与 [Codex Hooks](https://developers.openai.com/codex/hooks)（以当前 release 文档为准）。
+Codex 官方定位 tool hooks 为 useful guardrail 而非完整 security boundary；兜底仍有 mysql-cli 内部退出码契约（写操作缺 `--write`/`--ddl`/`--yes` 时 exit 3/4/5 拒绝）。hooks.json 的 schema 声明（`PermissionRequest` 事件、`decision.behavior: "allow"` 输出协议、matcher 为作用在工具名上的正则、timeout 单位为秒）已对照官方 Codex Hooks 文档与本机 codex-cli 0.153.0 核验；官方文档另注明多个 hook 同时决策时 **any deny wins**、否则 `allow` 跳过审批弹窗。Rules 语法与 hooks 协议见 [Codex Execution Policy](https://developers.openai.com/codex/exec-policy) 与 [Codex Hooks](https://developers.openai.com/codex/hooks)（以当前 release 文档为准）。
 
 合并类配置（`settings.json` / `opencode.json` / `.vscode/settings.json` / TRAE `.trae/hooks.json`）会深合并进现有文件并备份 `.bak`，不破坏既有内容；重复安装会按 command/键去重，幂等。单文件类（`.mdc` / instructions / `.md` / Pi `.ts`）默认跳过已存在文件，`--force` 覆盖。
 

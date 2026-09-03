@@ -13,6 +13,12 @@
 #
 # Known gaps (see docs/agent-integration.md):
 # - `env VAR=... mysql-cli ...` cannot be expressed as a prefix pattern.
+# - Absolute-path invocations (`/usr/local/bin/mysql-cli ...`,
+#   `$GOBIN/mysql-cli ...`) match no prefix pattern here, so they never enter
+#   the approval path and the PermissionRequest hook never fires for them.
+#   They fall through to Codex's native approval policy plus mysql-cli's
+#   internal exit-code contract (writes without --write/--ddl/--yes are
+#   rejected with exit 3/4/5).
 # - Arbitrary shell embedding (bash -c "mysql-cli ... --write") is not
 #   guaranteed to be split into evaluable tokens by the rules engine.
 

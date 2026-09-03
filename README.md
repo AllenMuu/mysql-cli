@@ -157,8 +157,10 @@ uninterrupted.
 - **guide** = context instruction; relies on the model honoring it (no engine gate).
 - Codex has no `ask` decision (returning one marks the hook failed and the
   command **continues**), so it combines a coarse `.rules` prompt gate with a
-  PermissionRequest hook that auto-allows proven reads and stays silent on
-  writes (fail-to-prompt). See the
+  PermissionRequest hook that auto-allows proven read-only subcommands
+  (`query` / `schema` / `sample` / `tables` / `databases` / `read` / `explore` /
+  `analyze` / `version`) and stays silent on writes and file-writing
+  subcommands like `agent` / `config` (fail-to-prompt). See the
   [Codex notes](./docs/agent-integration.md#codex-特殊说明) for boundaries.
 - Merge-class configs (`settings.json`, `opencode.json`, `.vscode/settings.json`,
   TRAE `hooks.json`) are **deep-merged** into the existing file with a `.bak` backup;
