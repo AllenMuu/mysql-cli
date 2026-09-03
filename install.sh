@@ -48,9 +48,14 @@ if curl -fsSL "$CHECKSUMS_URL" -o "$TMP/checksums.txt"; then
 	expected=$(awk -v want="$ARCHIVE" '$2 == want {print $1; exit}' "$TMP/checksums.txt")
 	if [ -n "$expected" ]; then
 		# 在 TMP 目录内执行校验，让相对路径匹配归档文件名。
-		actual=$(cd "$TMP" && command -v sha256sum >/dev/null 2>&1 && sha256sum "$ARCHIVE" | awk '{print $1}')
-		if [ -z "$actual" ] && command -v shasum >/dev/null 2>&1; then
+		# 用显式分支而非 && 链：macOS 无 sha256sum 时，命令替换整体退出码为 1，
+		# 在 set -e 下赋值语句会直接终止脚本，导致 shasum 回退分支不可达。
+		if command -v sha256sum >/dev/null 2>&1; then
+			actual=$(cd "$TMP" && sha256sum "$ARCHIVE" | awk '{print $1}')
+		elif command -v shasum >/dev/null 2>&1; then
 			actual=$(cd "$TMP" && shasum -a 256 "$ARCHIVE" | awk '{print $1}')
+		else
+			actual=""
 		fi
 		if [ -z "$actual" ]; then
 			c_warn "no sha256sum/shasum tool found; skipping integrity check"
