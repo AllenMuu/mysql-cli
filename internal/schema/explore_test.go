@@ -69,7 +69,7 @@ func TestAnalyzeCombinesSchemaAndSample(t *testing.T) {
 	assert.NoError(t, err)
 	// Two sections: schema columns then sample columns.
 	assert.Equal(t, 2, len(r.Rows))
-	assert.Equal(t, "id", r.Rows[0][1]) // schema row: section,col,...
+	assert.Equal(t, "id", r.Rows[0][1])    // schema row: section,col,...
 	assert.EqualValues(t, 1, r.Rows[1][1]) // sample row (int preserved)
 }
 

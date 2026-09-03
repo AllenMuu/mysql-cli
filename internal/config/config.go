@@ -16,14 +16,14 @@ import (
 
 // SSHConfig mirrors the original MCP's MYSQL_SSH_* options.
 type SSHConfig struct {
-	Enable                bool
-	Host                  string
-	Port                  int
-	User                  string
-	KeyPath               string
-	RemoteHost            string
-	RemotePort            int
-	LocalPort             int
+	Enable     bool
+	Host       string
+	Port       int
+	User       string
+	KeyPath    string
+	RemoteHost string
+	RemotePort int
+	LocalPort  int
 	// KnownHostsFile 是 known_hosts 文件路径；空表示用默认 ~/.ssh/known_hosts。
 	KnownHostsFile string
 	// InsecureIgnoreHostKey=true 时跳过 host key 校验（MITM 风险，仅调试用）。
@@ -266,6 +266,7 @@ func applyEnv(ds Datasource) (Datasource, error) {
 //   - ConnectTimeout -> 10（秒，>0）
 //   - Charset -> "utf8mb4"
 //   - SQLMode -> "TRADITIONAL"
+//
 // 其余字段（Collation/SSLMode/SSLCA/AuthPlugin 等）留空表示"未设置"，
 // conn.DSN() 在为空时跳过对应参数，故无需在此强加默认值。
 func applyDefaults(ds Datasource) Datasource {
