@@ -29,6 +29,12 @@ var codebuddyRule string
 //go:embed templates/pi-mysql-write-guard.ts
 var piExtensionScript []byte
 
+//go:embed templates/codex-mysql-write-guard.py
+var codexHookScript []byte
+
+//go:embed templates/codex-mysql-cli.rules
+var codexRules string
+
 // Capability classifies how forcefully an agent guards writes.
 type Capability int
 
@@ -94,7 +100,7 @@ type Agent struct {
 }
 
 // Agents is the ordered registry of supported agents.
-var Agents = []Agent{claudeCode, cursor, opencode, copilot, codebuddy, trae, pi}
+var Agents = []Agent{claudeCode, codex, cursor, opencode, copilot, codebuddy, trae, pi}
 
 // Lookup returns the agent with the given name.
 func Lookup(name string) (Agent, bool) {
@@ -290,6 +296,46 @@ var claudeCode = Agent{
 	},
 }
 
+var codex = Agent{
+	Name: "codex",
+	Desc: "Codex (Rules prompt + PermissionRequest hook -> human approval)",
+	Cap:  CapEnforce,
+	steps: func(o InstallOpts) ([]step, error) {
+		// Codex has no Claude-style PreToolUse "ask": the value is parsed but
+		// unsupported, and an unsupported decision marks the hook failed while
+		// the tool call CONTINUES. So enforcement is a two-layer combo instead:
+		//
+		//   rules (coarse gate): every mysql-cli invocation (plus common
+		//     wrapper prefixes) gets decision="prompt", routing it into the
+		//     approval path. prefix_rule cannot express flags at arbitrary
+		//     positions, so it must gate on the program, not the flags.
+		//   hook (precise filter): the PermissionRequest hook auto-allows only
+		//     PROVEN read-only calls; writes and anything uncertain emit no
+		//     decision, keeping Codex's native human-approval prompt.
+		//
+		// Project-local hooks/rules load only after the user trusts the
+		// project's .codex layer; Install never auto-trusts (that human trust
+		// boundary is part of the security model).
+		var base, hookCmd string
+		if o.Scope == ScopeGlobal {
+			base, hookCmd = o.Home, `python3 "$HOME/.codex/hooks/mysql-write-guard.py"`
+		} else {
+			base = o.ProjectDir
+			// Fallback to $PWD for non-git projects: git rev-parse failing
+			// would substitute an empty path and the hook would never run
+			// (fail-safe direction, but every call would silently degrade to
+			// the native approval prompt).
+			hookCmd = `python3 "$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")/.codex/hooks/mysql-write-guard.py"`
+		}
+		frag := permissionRequestFragment("^Bash$", hookCmd)
+		return []step{
+			{path: filepath.Join(base, ".codex", "hooks", "mysql-write-guard.py"), action: actionCopyScript, content: codexHookScript},
+			{path: filepath.Join(base, ".codex", "hooks.json"), action: actionMergeJSON, fragment: frag},
+			{path: filepath.Join(base, ".codex", "rules", "mysql-cli-write-guard.rules"), action: actionWriteFile, content: []byte(codexRules)},
+		}, nil
+	},
+}
+
 var cursor = Agent{
 	Name: "cursor",
 	Desc: "Cursor (.cursor/rules, guide only)",
@@ -447,6 +493,31 @@ func preToolUseFragment(matcher, hookCmd string) map[string]any {
 					"matcher": matcher,
 					"hooks": []any{
 						map[string]any{"type": "command", "command": hookCmd},
+					},
+				},
+			},
+		},
+	}
+}
+
+// permissionRequestFragment builds a Codex hooks.json fragment. Codex's
+// hooks.json schema mirrors Claude Code's (matcher/hooks/type/command) with
+// two additions used here: timeout (seconds, per hook) and statusMessage
+// (shown while the hook runs). The matcher is a regex applied to the
+// canonical tool name; "^Bash$" is Codex's shell-command tool.
+func permissionRequestFragment(matcher, hookCmd string) map[string]any {
+	return map[string]any{
+		"hooks": map[string]any{
+			"PermissionRequest": []any{
+				map[string]any{
+					"matcher": matcher,
+					"hooks": []any{
+						map[string]any{
+							"type":          "command",
+							"command":       hookCmd,
+							"timeout":       10,
+							"statusMessage": "Checking mysql-cli operation",
+						},
 					},
 				},
 			},

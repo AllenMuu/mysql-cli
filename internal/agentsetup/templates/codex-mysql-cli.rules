@@ -1,0 +1,63 @@
+# mysql-cli write guard -- Codex execution policy (coarse gate).
+#
+# Every mysql-cli invocation (plus common wrapper prefixes) is routed into
+# Codex's approval path with decision="prompt". The PermissionRequest hook
+# (hooks/mysql-write-guard.py) is the precise filter: proven read-only calls
+# are auto-allowed (no prompt), write-flag calls keep the native
+# human-approval prompt.
+#
+# Why a blanket prompt instead of matching --write/--ddl/--yes here:
+# prefix_rule matches ordered command tokens only. The documented write form
+# is `mysql-cli query "<sql>" --write` with the flag at the END, which no
+# prefix pattern can express. Rules = coarse gate, hook = precise classifier.
+#
+# Known gaps (see docs/agent-integration.md):
+# - `env VAR=... mysql-cli ...` cannot be expressed as a prefix pattern.
+# - Arbitrary shell embedding (bash -c "mysql-cli ... --write") is not
+#   guaranteed to be split into evaluable tokens by the rules engine.
+
+prefix_rule(
+    pattern = ["mysql-cli"],
+    decision = "prompt",
+    justification = "mysql-cli database operations require approval; the mysql-write-guard PermissionRequest hook auto-allows verified reads",
+    match = [
+        "mysql-cli query \"SELECT 1\"",
+        "mysql-cli schema users",
+        "mysql-cli query \"UPDATE users SET status=1 WHERE id=1\" --write",
+    ],
+)
+
+prefix_rule(
+    pattern = ["rtk", "mysql-cli"],
+    decision = "prompt",
+    justification = "mysql-cli database operations require approval (rtk wrapper)",
+    match = ["rtk mysql-cli query \"SELECT 1\""],
+)
+
+prefix_rule(
+    pattern = ["rtk", "proxy", "mysql-cli"],
+    decision = "prompt",
+    justification = "mysql-cli database operations require approval (rtk proxy wrapper)",
+    match = ["rtk proxy mysql-cli query \"SELECT 1\""],
+)
+
+prefix_rule(
+    pattern = ["sudo", "mysql-cli"],
+    decision = "prompt",
+    justification = "mysql-cli database operations require approval (sudo wrapper)",
+    match = ["sudo mysql-cli query \"SELECT 1\""],
+)
+
+prefix_rule(
+    pattern = ["command", "mysql-cli"],
+    decision = "prompt",
+    justification = "mysql-cli database operations require approval (command wrapper)",
+    match = ["command mysql-cli query \"SELECT 1\""],
+)
+
+prefix_rule(
+    pattern = ["nohup", "mysql-cli"],
+    decision = "prompt",
+    justification = "mysql-cli database operations require approval (nohup wrapper)",
+    match = ["nohup mysql-cli query \"SELECT 1\""],
+)

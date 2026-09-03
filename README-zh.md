@@ -138,6 +138,7 @@ mysql-cli query "SELECT * FROM users LIMIT 10"      # 默认 JSON 输出
 | Agent | `--project`(当前项目) | `--global`(用户级) | 能力 |
 | --- | --- | --- | --- |
 | `claude` | `.claude/settings.json` + `.claude/hooks/mysql-write-guard.py` | `~/.claude/...` | **强制**(PreToolUse hook → ask) |
+| `codex` | `.codex/hooks.json` + `.codex/hooks/mysql-write-guard.py` + `.codex/rules/mysql-cli-write-guard.rules` | `~/.codex/...`(同构三件) | **强制**(Rules 粗门 prompt + PermissionRequest hook → 人类审批) |
 | `cursor` | `.cursor/rules/mysql-cli-write-guard.mdc` | _不支持_(IDE 设置) | **引导**(仅规则) |
 | `opencode` | `opencode.json` | `~/.config/opencode/opencode.json` | **强制**(permission glob → ask) |
 | `copilot` | `.vscode/settings.json` + `.github/copilot-instructions.md` | VS Code User `settings.json` | **强制**(`autoApprove` 正则 → false) |
@@ -147,7 +148,9 @@ mysql-cli query "SELECT * FROM users LIMIT 10"      # 默认 JSON 输出
 
 - **强制** = 引擎级闸门:只有带 `--write` / `--ddl` / `--yes` 的命令才弹窗,只读静默放行。
 - **引导** = 上下文指令,依赖模型自觉遵守(无引擎闸门)。
-- Codex **不支持** -- hook 机制未坐实,`.rules` 无法按 flag 精确拦截。
+- Codex 无 `ask` 决策(返回它会被视为 hook 失败且命令**继续执行**),因此采用
+  `.rules` 粗门 prompt + PermissionRequest hook 精过滤(只读自动放行、写操作保持原生审批、
+  fail-to-prompt)。边界详见 [Codex 特殊说明](./docs/agent-integration.md#codex-特殊说明)。
 - 合并类配置(`settings.json`、`opencode.json`、`.vscode/settings.json`、TRAE `hooks.json`)
   会**深合并**进现有文件并备份 `.bak`;重复安装幂等。单文件配置(`.mdc`、`.md`、Pi `.ts`)
   默认跳过已存在文件,`--force` 覆盖。

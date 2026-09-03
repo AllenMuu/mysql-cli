@@ -160,7 +160,7 @@ func TestLookupAndNames(t *testing.T) {
 	assert.Equal(t, CapEnforce, a.Cap)
 	_, ok = Lookup("nope")
 	assert.False(t, ok)
-	assert.Len(t, Names(), 7)
+	assert.Len(t, Names(), 8)
 }
 
 func TestInstall_TraeProject(t *testing.T) {

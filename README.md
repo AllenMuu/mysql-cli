@@ -144,6 +144,7 @@ uninterrupted.
 | Agent | `--project` (cwd) | `--global` (user-level) | Capability |
 | --- | --- | --- | --- |
 | `claude` | `.claude/settings.json` + `.claude/hooks/mysql-write-guard.py` | `~/.claude/...` | **enforce** (PreToolUse hook → ask) |
+| `codex` | `.codex/hooks.json` + `.codex/hooks/mysql-write-guard.py` + `.codex/rules/mysql-cli-write-guard.rules` | `~/.codex/...` (same three) | **enforce** (Rules prompt gate + PermissionRequest hook → human approval) |
 | `cursor` | `.cursor/rules/mysql-cli-write-guard.mdc` | _not supported_ (IDE setting) | **guide** (rule only) |
 | `opencode` | `opencode.json` | `~/.config/opencode/opencode.json` | **enforce** (permission glob → ask) |
 | `copilot` | `.vscode/settings.json` + `.github/copilot-instructions.md` | VS Code User `settings.json` | **enforce** (`autoApprove` regex → false) |
@@ -154,7 +155,11 @@ uninterrupted.
 - **enforce** = engine-level gate: only commands with `--write` / `--ddl` / `--yes`
   trigger the prompt; reads pass silently.
 - **guide** = context instruction; relies on the model honoring it (no engine gate).
-- Codex is **not supported** - its hook story is incomplete and `.rules` can't match flags precisely.
+- Codex has no `ask` decision (returning one marks the hook failed and the
+  command **continues**), so it combines a coarse `.rules` prompt gate with a
+  PermissionRequest hook that auto-allows proven reads and stays silent on
+  writes (fail-to-prompt). See the
+  [Codex notes](./docs/agent-integration.md#codex-特殊说明) for boundaries.
 - Merge-class configs (`settings.json`, `opencode.json`, `.vscode/settings.json`,
   TRAE `hooks.json`) are **deep-merged** into the existing file with a `.bak` backup;
   re-running is idempotent. Single-file configs (`.mdc`, `.md`, Pi `.ts`) skip
