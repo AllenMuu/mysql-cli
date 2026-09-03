@@ -34,6 +34,19 @@ PREFIXES = {"rtk", "sudo", "env", "nohup", "command"}
 RTK_SUB = {"proxy"}  # `rtk proxy <cmd>` form
 
 
+def _flag_in_tokens(tokens):
+    """Match write flags as whole tokens or pflag's --flag=value form.
+
+    Exact-token matching alone would let "--write=true" (accepted by pflag)
+    slip through the guard as a "read" -- the token is never equal to "--write".
+    """
+    return any(
+        t == f or t.startswith(f + "=")
+        for f in WRITE_FLAGS
+        for t in tokens
+    )
+
+
 def _command_word(tokens):
     """Return the first real command token, skipping rtk/sudo/env wrappers."""
     i = 0
@@ -60,7 +73,7 @@ def _is_mysql_cli_write(command):
         # cmd 是 basename 后的结果，已剥掉目录；endswith("/mysql-cli") 在 basename
         # 后永远为 false（原代码冗余，已清理）。只比较 == "mysql-cli"。
         is_mysql = cmd == "mysql-cli"
-        if is_mysql and WRITE_FLAGS.intersection(tokens):
+        if is_mysql and _flag_in_tokens(tokens):
             return True
 
     # Fallback: 仅在 shlex 解析失败时触发（极罕见，通常是未闭合引号）。
@@ -69,9 +82,10 @@ def _is_mysql_cli_write(command):
     # 算边界，导致引号内的 mysql-cli 字面量被误判为调用）。
     # 权衡：会漏掉 `bash -c "mysql-cli ... --write"` 这种 wrapped 调用——但仅在
     # shlex 失败时才漏；shlex 正常时走上面的 token 化路径会正确识别。
+    # lookahead 同时接受 `=`，覆盖 `--write=true`（pflag 的 --flag=value 形式）。
     if re.search(r"(?:^|\s)mysql-cli\b", command):
         for flag in WRITE_FLAGS:
-            if re.search(r"(?:^|\s)" + re.escape(flag) + r"(?=[\s\"';|&]|$)", command):
+            if re.search(r"(?:^|\s)" + re.escape(flag) + r"(?=[\s\"';|&=]|$)", command):
                 return True
     return False
 
