@@ -9,6 +9,7 @@ import (
 	"github.com/AllenMuu/mysql-cli/internal/conn"
 	"github.com/AllenMuu/mysql-cli/internal/format"
 	"github.com/AllenMuu/mysql-cli/internal/query"
+	"github.com/AllenMuu/mysql-cli/internal/repl"
 	"github.com/AllenMuu/mysql-cli/internal/safety"
 )
 
@@ -30,8 +31,8 @@ import (
 // 出现的关键子串。mapError / errorCodeName 是退出码的"行为侧"，
 // agentNotesTemplate 是"文档侧"，本表用于一致性测试。
 var exitCodeHelpHints = []struct {
-	Code  int
-	Hint  string // 必须出现在 agentNotesTemplate 中
+	Code int
+	Hint string // 必须出现在 agentNotesTemplate 中
 }{
 	{ExitConnFailed, "2 conn"},
 	{ExitReadonlyViolation, "3 readonly"},
@@ -75,6 +76,10 @@ func mapError(err error) int {
 	case errors.Is(err, config.ErrConfig):
 		// config 包已用 %w: %w 包装 toml / env / placeholder / unknown ds 错误。
 		return ExitConfigError
+	case errors.Is(err, repl.ErrInitFailed):
+		// REPL readline 初始化失败（终端/环境不可用）属内部错误而非用户
+		// 配置错误：曾经的字符串前缀匹配（"repl exited"）会把它吞成 exit 0。
+		return ExitInternalError
 	}
 	// 字符串匹配兜底：仅覆盖驱动直接抛出、未经 conn 包包装的错误。
 	// 注意只匹配 "dial"（连接拒绝的典型信号），不再匹配泛化的 "connection"

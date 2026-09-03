@@ -8,6 +8,7 @@ import (
 	"github.com/AllenMuu/mysql-cli/internal/config"
 	"github.com/AllenMuu/mysql-cli/internal/conn"
 	"github.com/AllenMuu/mysql-cli/internal/query"
+	"github.com/AllenMuu/mysql-cli/internal/repl"
 	"github.com/AllenMuu/mysql-cli/internal/safety"
 	"github.com/stretchr/testify/assert"
 )
@@ -36,6 +37,10 @@ func TestMapError(t *testing.T) {
 		// config.ErrConfig 哨兵路径（任务 2）。
 		{"config sentinel wrapped", fmt.Errorf("%w: %w", config.ErrConfig, errors.New("unknown datasource")), ExitConfigError},
 		{"config fallback", errors.New("unknown datasource"), ExitConfigError},
+		// repl.ErrInitFailed 哨兵路径（B4）：readline 初始化失败 -> exit 11，
+		// 不再被 "repl exited" 字符串前缀匹配吞成 exit 0。
+		{"repl init failed", fmt.Errorf("%w: %w", repl.ErrInitFailed, errors.New("tty boom")), ExitInternalError},
+		{"repl init failed bare", repl.ErrInitFailed, ExitInternalError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

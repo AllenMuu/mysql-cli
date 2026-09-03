@@ -78,6 +78,105 @@ func TestWarnUntrustedProject_NoFallback(t *testing.T) {
 	assert.Empty(t, stderr.String()) // no global fallback -> Load errors anyway, no warn
 }
 
+// writeExplicitConfig 在 dir 下创建一个显式 config 文件并返回其绝对路径。
+func writeExplicitConfig(t *testing.T, dir string) string {
+	t.Helper()
+	p := filepath.Join(dir, "config.toml")
+	require.NoError(t, os.WriteFile(p, []byte("default = \"phish\"\n"), 0o600))
+	return p
+}
+
+// TestWarnUntrustedExplicitConfig_RelativePath（B1）：显式 --config 传相对
+// 路径、指向 cwd 内未信任项目的文件时，输出告警（非阻断）。
+func TestWarnUntrustedExplicitConfig_RelativePath(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	writeExplicitConfig(t, proj)
+
+	var stderr bytes.Buffer
+	g := &Globals{eout: &stderr}
+	g.warnUntrustedExplicitConfig("config.toml", proj, home)
+
+	assert.Contains(t, stderr.String(), "WARN")
+	assert.Contains(t, stderr.String(), "explicit config")
+	assert.Contains(t, stderr.String(), "config.toml")
+	assert.Contains(t, stderr.String(), "Do not auto-trust")
+}
+
+// TestWarnUntrustedExplicitConfig_AbsoluteUnderCwd（B1）：绝对路径但位于
+// cwd 之下同样告警。
+func TestWarnUntrustedExplicitConfig_AbsoluteUnderCwd(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	cfgFile := writeExplicitConfig(t, proj)
+
+	var stderr bytes.Buffer
+	g := &Globals{eout: &stderr}
+	g.warnUntrustedExplicitConfig(cfgFile, proj, home)
+
+	assert.Contains(t, stderr.String(), "WARN")
+}
+
+// TestWarnUntrustedExplicitConfig_AbsoluteOutsideCwd（B1）：指向 cwd 之外的
+// 绝对路径（如用户 home 下的自有配置）不告警。
+func TestWarnUntrustedExplicitConfig_AbsoluteOutsideCwd(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	outside := writeExplicitConfig(t, home)
+
+	var stderr bytes.Buffer
+	g := &Globals{eout: &stderr}
+	g.warnUntrustedExplicitConfig(outside, proj, home)
+
+	assert.Empty(t, stderr.String())
+}
+
+// TestWarnUntrustedExplicitConfig_TrustedProject（B1）：项目已 trust 时不告警。
+func TestWarnUntrustedExplicitConfig_TrustedProject(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	writeExplicitConfig(t, proj)
+	require.NoError(t, config.AddTrust(home, proj))
+
+	var stderr bytes.Buffer
+	g := &Globals{eout: &stderr}
+	g.warnUntrustedExplicitConfig("config.toml", proj, home)
+
+	assert.Empty(t, stderr.String())
+}
+
+// TestWarnUntrustedExplicitConfig_MissingFile（B1）：文件不存在时不会被
+// 加载，无钓鱼面，不告警。
+func TestWarnUntrustedExplicitConfig_MissingFile(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+
+	var stderr bytes.Buffer
+	g := &Globals{eout: &stderr}
+	g.warnUntrustedExplicitConfig("no-such-file.toml", proj, home)
+
+	assert.Empty(t, stderr.String())
+}
+
+// TestWarnUntrustedExplicitConfig_Suppressed（B1）：--no-trust-warn 与
+// MYSQL_CLI_NO_TRUST_WARN=1 均可抑制告警。
+func TestWarnUntrustedExplicitConfig_Suppressed(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	writeExplicitConfig(t, proj)
+
+	var stderr1 bytes.Buffer
+	g1 := &Globals{eout: &stderr1, NoTrustWarn: true}
+	g1.warnUntrustedExplicitConfig("config.toml", proj, home)
+	assert.Empty(t, stderr1.String())
+
+	t.Setenv("MYSQL_CLI_NO_TRUST_WARN", "1")
+	var stderr2 bytes.Buffer
+	g2 := &Globals{eout: &stderr2}
+	g2.warnUntrustedExplicitConfig("config.toml", proj, home)
+	assert.Empty(t, stderr2.String())
+}
+
 func TestConfigTrust_NonTTYRequiresYes(t *testing.T) {
 	orig := stdinIsTerminal
 	stdinIsTerminal = func() bool { return false }
