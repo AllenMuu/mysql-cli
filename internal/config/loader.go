@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -97,6 +98,12 @@ func Load(opts LoadOpts) (*Config, []PathEntry, error) {
 	var merged *Config
 	// load low->high: global first, then project (if trusted). explicit is single.
 	for _, e := range entries {
+		// 显式指定的配置文件（--config / MYSQL_CLI_CONFIG）不存在是路径拼错
+		// 的强信号：静默忽略会让进程连到错误的库。global/project 默认路径
+		// 不存在仍是合法常态（继续静默跳过）。
+		if e.Kind == "explicit" && !e.Exists {
+			return nil, entries, fmt.Errorf("%w: config file %q specified via --config or MYSQL_CLI_CONFIG does not exist", ErrConfig, e.Path)
+		}
 		if !e.Exists {
 			continue
 		}
@@ -145,7 +152,7 @@ func MergeConfigs(low, high *Config) *Config {
 
 // TrustFilePath returns <home>/.config/mysql-cli/trusted.
 func TrustFilePath(home string) string {
-	return filepath.Join(home, RelConfigPath[:len(RelConfigPath)-len("config.toml")]+"trusted")
+	return filepath.Join(home, ".config", "mysql-cli", "trusted")
 }
 
 // ReadTrusted parses the plaintext trust file (one normalized path per line).
@@ -198,7 +205,12 @@ func IsTrusted(home, projectRoot string) bool {
 // Creates the parent dir and file with 0600 if absent.
 func AddTrust(home, projectRoot string) error {
 	target := normalizePath(projectRoot)
-	list, _ := ReadTrusted(home)
+	list, err := ReadTrusted(home)
+	if err != nil {
+		// 读取失败（IO 故障）必须向上返回：吞掉错误继续覆盖写会丢失
+		// 已有的全部 trust 条目。挂 ErrConfig 哨兵（cli 层 -> exit 10）。
+		return fmt.Errorf("%w: read trusted file: %w", ErrConfig, err)
+	}
 	for _, e := range list {
 		if e == target {
 			return nil

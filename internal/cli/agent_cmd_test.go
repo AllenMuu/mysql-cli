@@ -92,12 +92,34 @@ func TestAgentInitNotTTYNoFlags(t *testing.T) {
 	assert.Contains(t, err.Error(), "not a TTY")
 }
 
+// TestAgentInitCursorGlobalErrorInResults（B3 回归）：部分 agent 失败时命令
+// 返回非零退出码（exit 10），错误同时体现在输出与返回的 error 里。
 func TestAgentInitCursorGlobalErrorInResults(t *testing.T) {
 	chdir(t, t.TempDir())
 	c, buf := newAgentInitCmdForTest(t)
 	c.SetArgs([]string{"--agents", "cursor", "--global"})
-	// cursor global is unsupported, but reported in results (not as a cmd error)
-	require.NoError(t, c.Execute())
+	// cursor global is unsupported: reported in results AND as a cmd error
+	err := c.Execute()
+	require.Error(t, err)
 	assert.Contains(t, buf.String(), "cursor")
 	assert.Contains(t, buf.String(), "global scope not supported")
+	assert.Contains(t, err.Error(), "cursor")
+	assert.Equal(t, ExitConfigError, mapError(err))
+}
+
+// TestAgentInitJSONPartialFailure（B3）：--json 下部分失败输出
+// success:false + error 字段（信封格式与 format 包对齐），且返回非零退出码。
+func TestAgentInitJSONPartialFailure(t *testing.T) {
+	chdir(t, t.TempDir())
+	c, buf := newAgentInitCmdForTest(t)
+	c.SetArgs([]string{"--agents", "cursor", "--global", "--json"})
+	err := c.Execute()
+	require.Error(t, err)
+	assert.Contains(t, buf.String(), `"success": false`)
+	assert.Contains(t, buf.String(), `"error"`)
+	assert.Contains(t, buf.String(), `"code": "CONFIG_ERROR"`)
+	assert.Contains(t, buf.String(), "agent init failed for: cursor")
+	// data 保留 results 供诊断
+	assert.Contains(t, buf.String(), `"results"`)
+	assert.Equal(t, ExitConfigError, mapError(err))
 }

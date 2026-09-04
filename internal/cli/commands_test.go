@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/AllenMuu/mysql-cli/internal/config"
 	"github.com/AllenMuu/mysql-cli/internal/result"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestReadonlyViolationExitCode(t *testing.T) {
@@ -183,4 +185,70 @@ host = "h"
 	t.Setenv("HOME", t.TempDir())
 	code := Run([]string{"query", "SELECT 1", "-d", "nonexistent", "--config", cfg})
 	assert.Equal(t, ExitConfigError, code) // unknown datasource -> config error (file loaded, name missing)
+}
+
+// TestDefaultConfigPath（B6）：默认 config 路径解析自 home。
+func TestDefaultConfigPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	p, err := defaultConfigPath()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, config.RelConfigPath), p)
+}
+
+// TestDefaultConfigPathNoHome（B6）：home 不可用时返回 config 错误，不再
+// 退化成 cwd 相对路径。
+func TestDefaultConfigPathNoHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	p, err := defaultConfigPath()
+	require.Error(t, err)
+	assert.Empty(t, p)
+	assert.ErrorIs(t, err, config.ErrConfig)
+}
+
+// TestResolveNoHomeErrors（B6）：home 不可用时 resolve() 返回 config 错误
+// （exit 10），不把 cwd 相对路径当作 Trusted 全局配置加载。
+func TestResolveNoHomeErrors(t *testing.T) {
+	t.Setenv("HOME", "")
+	code := Run([]string{"query", "SELECT 1", "--host", "127.0.0.1", "--port", "1"})
+	assert.Equal(t, ExitConfigError, code) // 不是 ExitConnFailed：config 解析先行失败
+}
+
+// TestRootNoSubcommandNonTTYErrors（B5）：无子命令 + stdin 非 TTY（典型
+// agent 误用）时返回用法错误并退出非零（exit 10），不再进入 REPL 后
+// 立即 EOF 静默 exit 0。
+func TestRootNoSubcommandNonTTYErrors(t *testing.T) {
+	orig := stdinIsTerminal
+	stdinIsTerminal = func() bool { return false }
+	t.Cleanup(func() { stdinIsTerminal = orig })
+
+	var out, eout bytes.Buffer
+	g := &Globals{Format: "json", out: &out, eout: &eout}
+	root := newRootCmd(g)
+	root.SetArgs([]string{})
+	err := root.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no subcommand")
+	assert.Equal(t, ExitConfigError, mapError(err))
+	// agent 契约：stdout 仍输出 JSON 错误信封，而非只有退出码
+	assert.Contains(t, out.String(), `"code":"CONFIG_ERROR"`)
+	assert.Contains(t, out.String(), "no subcommand")
+}
+
+// TestRootNoSubcommandTTYProceeds（B5）：TTY 下无子命令仍走 REPL 路径
+// （这里因连接不可达在进入 REPL 前失败，证明未被用法检查拦截）。
+func TestRootNoSubcommandTTYProceeds(t *testing.T) {
+	orig := stdinIsTerminal
+	stdinIsTerminal = func() bool { return true }
+	t.Cleanup(func() { stdinIsTerminal = orig })
+
+	t.Setenv("HOME", t.TempDir())
+	var out, eout bytes.Buffer
+	g := &Globals{Format: "json", out: &out, eout: &eout}
+	root := newRootCmd(g)
+	root.SetArgs([]string{"--host", "127.0.0.1", "--port", "1"})
+	err := root.Execute()
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "no subcommand")
+	assert.Equal(t, ExitConnFailed, mapError(err))
 }

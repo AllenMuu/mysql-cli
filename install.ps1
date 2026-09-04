@@ -18,11 +18,10 @@ function Err($m)  { Write-Host "XX  $m" -ForegroundColor Red }
 
 # ---- 1. binary from the latest GitHub release ----
 Info "Installing mysql-cli binary from latest release..."
-$Arch = switch ($env:PROCESSOR_ARCHITECTURE) {
-	"ARM64" { "arm64" }
-	default { "amd64" }
-}
-$Archive = "mysql-cli_windows_$Arch.zip"
+# GoReleaser 不构建 windows/arm64 资产（.goreleaser.yml 显式 ignore 该组合），
+# 下载 windows_arm64.zip 必 404。Windows 11 ARM64 可通过 x64 模拟运行 amd64
+# 二进制，因此统一下载 amd64 资产。
+$Archive = "mysql-cli_windows_amd64.zip"
 $Url = "https://github.com/$Repo/releases/latest/download/$Archive"
 # GoReleaser 生成单一 checksums.txt（每个资产行：<hash>  <asset_name>），不生成
 # per-asset .sha256 文件。原代码尝试下载 $Url.sha256 永远 404，校验从未生效。

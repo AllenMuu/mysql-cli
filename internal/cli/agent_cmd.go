@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/AllenMuu/mysql-cli/internal/agentsetup"
+	"github.com/AllenMuu/mysql-cli/internal/config"
 	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
 )
@@ -39,7 +40,7 @@ TTY; use --agents and --project/--global for non-interactive use.
 Supported agents: ` + strings.Join(agentsetup.Names(), ", ") + `.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgentInit(cmd, g)
+			return runAgentInit(cmd)
 		},
 	}
 	c.Flags().String("agents", "", "comma-separated agent names (non-interactive)")
@@ -51,7 +52,7 @@ Supported agents: ` + strings.Join(agentsetup.Names(), ", ") + `.`,
 	return c
 }
 
-func runAgentInit(cmd *cobra.Command, g *Globals) error {
+func runAgentInit(cmd *cobra.Command) error {
 	agentsFlag, _ := cmd.Flags().GetString("agents")
 	project, _ := cmd.Flags().GetBool("project")
 	global, _ := cmd.Flags().GetBool("global")
@@ -106,7 +107,10 @@ func runAgentInit(cmd *cobra.Command, g *Globals) error {
 	if err != nil {
 		return fmt.Errorf("cannot determine home: %w", err)
 	}
-	cwd, _ := os.Getwd()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("cannot determine working directory: %w", err)
+	}
 	opts := agentsetup.InstallOpts{
 		Scope:      scope,
 		Force:      force,
@@ -121,25 +125,39 @@ func runAgentInit(cmd *cobra.Command, g *Globals) error {
 		Error   string   `json:"error,omitempty"`
 	}
 	var results []res
+	var failMsgs []string
 	for _, n := range names {
 		a, _ := agentsetup.Lookup(n)
 		written, err := a.Install(opts)
 		r := res{Agent: n, Written: written}
 		if err != nil {
 			r.Error = err.Error()
+			failMsgs = append(failMsgs, fmt.Sprintf("%s (%s)", n, err.Error()))
 		}
 		results = append(results, r)
 	}
+	failureSummary := strings.Join(failMsgs, "; ")
 
 	w := cmd.OutOrStdout()
 	if asJSON {
-		payload := map[string]any{"success": true, "data": map[string]any{
+		// 信封格式与 format 包对齐：任一 agent 失败时 success:false + error
+		// 字段（data 保留 results 供诊断），脚本化调用方能感知失败。
+		payload := map[string]any{"success": len(failMsgs) == 0, "data": map[string]any{
 			"scope":   scope.String(),
 			"dry_run": dryRun,
 			"results": results,
 		}}
+		if len(failMsgs) > 0 {
+			payload["error"] = map[string]any{
+				"code":    "CONFIG_ERROR",
+				"message": "agent init failed for: " + failureSummary,
+			}
+		}
 		b, _ := json.MarshalIndent(payload, "", "  ")
 		fmt.Fprintln(w, string(b))
+		if len(failMsgs) > 0 {
+			return fmt.Errorf("%w: agent init failed for: %s", config.ErrConfig, failureSummary)
+		}
 		return nil
 	}
 	fmt.Fprintf(w, "scope: %s%s\n", scope, dryRunSuffix(dryRun))
@@ -153,6 +171,10 @@ func runAgentInit(cmd *cobra.Command, g *Globals) error {
 			fmt.Fprintf(w, "     %s\n", p)
 		}
 	}
+	if len(failMsgs) > 0 {
+		// 非 json 路径：结果里已逐项输出 ❌，这里只负责非零退出码（exit 10）。
+		return fmt.Errorf("%w: agent init failed for: %s", config.ErrConfig, failureSummary)
+	}
 	return nil
 }
 
@@ -163,27 +185,28 @@ func dryRunSuffix(dryRun bool) string {
 	return ""
 }
 
-// stdinIsTerminal reports whether stdin is a character device (a TTY). It is a
+// stdinIsTerminal reports whether stdin is an interactive terminal. It is a
 // variable so tests can force the non-interactive path.
+//
+// 不能用 os.ModeCharDevice 判断：/dev/null 也是字符设备，会被误判为 TTY，
+// agent 以 `< /dev/null` 调用时即可绕过非交互防护（B5）。readline.IsTerminal
+// 走 TCGETS ioctl，只有真终端才返回 true。
 var stdinIsTerminal = func() bool {
-	info, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
+	return readline.IsTerminal(int(os.Stdin.Fd()))
 }
 
 // promptAgents runs an interactive multi-select menu and returns the chosen
-// agent names. Returns nil on EOF.
+// agent names. Returns nil on EOF. All prompt output goes to stderr so the
+// interactive flow never pollutes stdout (and --json output stays parseable).
 func promptAgents() []string {
-	rl, err := readline.New("")
+	rl, err := readline.NewEx(&readline.Config{Stdout: os.Stderr})
 	if err != nil {
 		return nil
 	}
 	defer rl.Close()
-	fmt.Println("Select agents to install (comma-separated numbers, e.g. 1,3,4):")
+	fmt.Fprintln(os.Stderr, "Select agents to install (comma-separated numbers, e.g. 1,3,4):")
 	for i, a := range agentsetup.Agents {
-		fmt.Printf("  %d) %-10s %s [%s]\n", i+1, a.Name, a.Desc, a.Cap)
+		fmt.Fprintf(os.Stderr, "  %d) %-10s %s [%s]\n", i+1, a.Name, a.Desc, a.Cap)
 	}
 	for {
 		rl.SetPrompt("agents> ")
@@ -199,9 +222,10 @@ func promptAgents() []string {
 	}
 }
 
-// promptScope runs an interactive scope picker.
+// promptScope runs an interactive scope picker. Prompt output goes to stderr
+// (same rationale as promptAgents).
 func promptScope() agentsetup.Scope {
-	rl, err := readline.New("")
+	rl, err := readline.NewEx(&readline.Config{Stdout: os.Stderr})
 	if err != nil {
 		return agentsetup.ScopeProject
 	}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/AllenMuu/mysql-cli/internal/config"
@@ -77,9 +76,6 @@ func Run(args []string) (code int) {
 	root := newRootCmd(g)
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
-		if strings.HasPrefix(err.Error(), "repl exited") {
-			return ExitOK
-		}
 		return mapError(err)
 	}
 	return ExitOK
@@ -100,8 +96,9 @@ func newRootCmd(g *Globals) *cobra.Command {
 			if _, err := time.ParseDuration(g.Timeout); err != nil {
 				return fmt.Errorf("invalid timeout %q: %w", g.Timeout, err)
 			}
-			// limit 校验：负数拒绝（exit 10）。0 和未设置都表示"用默认 cap"，
-			// 不拒绝。超大 limit（>1_000_000）给 stderr 警告但不拒绝，用户可能真需要。
+			// limit 校验：负数拒绝（exit 10）。未设置 --limit 时用默认 cap；
+			// 显式 --limit 0 表示无限制（等同 --no-limit，见 resolveCap），均不
+			// 拒绝。超大 limit（>1_000_000）给 stderr 警告但不拒绝，用户可能真需要。
 			if g.Limit < 0 {
 				return fmt.Errorf("%w: limit must be >= 0", config.ErrConfig)
 			}
@@ -120,7 +117,14 @@ func newRootCmd(g *Globals) *cobra.Command {
 	pf.IntVar(&g.Limit, "limit", 0, "row limit for SELECT queries")
 	pf.BoolVar(&g.NoLimit, "no-limit", false, "disable default row cap for SELECT (returns full result set)")
 	pf.StringVar(&g.Timeout, "timeout", "30s", "query timeout")
-	pf.StringVar(&g.ConfigPath, "config", defaultConfigPath(), "config file path")
+	// home 解析失败时 defaultConfigPath 返回错误（不退化为 cwd 相对路径，
+	// 见 B6）。此处只注册 flag 默认值，用空串兜底；真正解析 config 时
+	// resolve() 会返回同样的 config 错误并以 exit 10 退出。
+	defConfig, cfgErr := defaultConfigPath()
+	if cfgErr != nil {
+		defConfig = ""
+	}
+	pf.StringVar(&g.ConfigPath, "config", defConfig, "config file path")
 	pf.StringVar(&g.Host, "host", "", "MySQL host")
 	pf.IntVar(&g.Port, "port", 0, "MySQL port")
 	pf.StringVar(&g.User, "user", "", "MySQL user")
@@ -146,20 +150,38 @@ func newRootCmd(g *Globals) *cobra.Command {
 	)
 	// No subcommand -> interactive REPL (human debug; not the agent path).
 	root.RunE = func(cmd *cobra.Command, args []string) error {
+		// 无子命令且 stdin 非 TTY（典型 agent 误用：管道/空输入）时直接报
+		// 用法错误退出非零。否则 readline 会立即 EOF -> 静默 exit 0，agent
+		// 无法区分成功与误用（B5）。
+		if !stdinIsTerminal() {
+			err := fmt.Errorf("%w: no subcommand given and stdin is not a terminal; run `mysql-cli --help` for usage", config.ErrConfig)
+			g.emitResult(result.Empty(), err)
+			return err
+		}
 		pool, err := g.openPool()
 		if err != nil {
 			g.emitResult(result.Empty(), err)
 			return err
 		}
 		defer pool.Close()
-		code := repl.Start(repl.Config{
-		Pool: pool, Opts: g.opts(), Out: g.out, Format: g.Format,
-		DefaultCap: g.defaultCap(),
-	})
-		if code == 0 {
-			return nil
+		// repl.Start 的契约固定为 (0, nil)（正常退出）/ (1, err)（初始化
+		// 失败），code 无需检查：不存在 "非零 code 且 err 为 nil" 的路径。
+		// 曾有一个 code != 0 的防御分支，但它无哨兵、会被 mapError 兜底
+		// 误映射成 exit 10（config），已删除。
+		_, rerr := repl.Start(repl.Config{
+			Pool:       pool,
+			Opts:       g.opts(),
+			Out:        g.out,
+			Format:     g.Format,
+			DefaultCap: g.defaultCap(),
+		})
+		if rerr != nil {
+			// readline 初始化失败：向 stderr 输出原因；错误链携带
+			// repl.ErrInitFailed 哨兵，mapError 将其映射为 exit 11。
+			fmt.Fprintln(g.eout, formatErr(rerr, g.Format))
+			return rerr
 		}
-		return fmt.Errorf("repl exited with code %d", code)
+		return nil
 	}
 	applyHelpGrouping(root)
 	return root

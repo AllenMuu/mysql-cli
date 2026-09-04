@@ -10,8 +10,9 @@ on:
       - '.goreleaser.yml'
       - '.github/workflows/release.yml'
 
+# 最小权限：workflow 级只读；需要写权限的 job 在 job 级单独声明。
 permissions:
-  contents: write
+  contents: read
 
 # 同一个 ref 上的 release 不要并发跑，避免 tag 重推时双跑导致发布产物冲突。
 # PR 跑的 check job 用 github.event.pull_request 隔离，互不影响。
@@ -43,8 +44,27 @@ jobs:
         working-directory: dist/npm
         run: node --test
 
+  # 发布前测试门禁：直接推 tag 也会先跑全部 Go 单测，通过后才发版，
+  # 堵住"未测试代码直接发布"的缺口。ci.yml 只覆盖分支 push/PR，
+  # 不在 tag push 上触发，所以门禁必须放在本 workflow 里。
+  test:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Test
+        run: go test ./... -count=1
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    # goreleaser 要创建 GitHub release 及上传资产，需要写权限。
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -63,6 +83,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-npm:
+    # 只需要 registry token（NODE_AUTH_TOKEN）与 checkout 读权限，
+    # 不需要 contents: write。
     if: startsWith(github.ref, 'refs/tags/v') && vars.NPM_PUBLISH == 'true'
     needs: release
     runs-on: ubuntu-latest
@@ -75,8 +97,10 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - name: Set version from tag and publish
         working-directory: dist/npm
-        run: |
-          npm version "$(echo "${{ github.ref_name }}" | sed 's/^v//')" --no-git-tag-version
-          npm publish --access public
+        # 经 env 传递 github.ref_name，避免表达式直接内插进 shell（script injection）。
         env:
+          TAG: ${{ github.ref_name }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm version "$(echo "$TAG" | sed 's/^v//')" --no-git-tag-version
+          npm publish --access public

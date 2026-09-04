@@ -72,6 +72,33 @@ func TestExecuteTxnRequiresWrite(t *testing.T) {
 	assert.ErrorIs(t, err, ErrGuard)
 }
 
+// TestExecuteTxnRejectsDDL 验证 A8：MySQL 的 DDL 会隐式提交当前事务，破坏
+// txn 的原子性承诺，ExecuteTxn 必须拒绝 DDL（即使 --write/--ddl/--yes 齐全），
+// 且在触碰数据库之前就返回。
+func TestExecuteTxnRejectsDDL(t *testing.T) {
+	pool, mock := newMock(t)
+	_, err := ExecuteTxn(context.Background(), pool,
+		[]string{"INSERT INTO t VALUES (1)", "CREATE TABLE t2 (id INT)", "INSERT INTO t VALUES (2)"},
+		Options{Write: true, DDL: true, Yes: true})
+	assert.ErrorIs(t, err, ErrGuard)
+	assert.Contains(t, err.Error(), "implicit")
+	assert.NotErrorIs(t, err, ErrSQL)
+	// 连接前即拒绝：不应有任何 Begin/Exec/Commit 发生。
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestExecuteWriteSingleDDLStillAllowed 对照：单条 DDL 走 ExecuteWrite 保持允许
+// （事务外没有原子性问题，DDL 自身就是即时提交的）。
+func TestExecuteWriteSingleDDLStillAllowed(t *testing.T) {
+	pool, mock := newMock(t)
+	mock.ExpectBegin()
+	mock.ExpectExec("CREATE TABLE t2").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+	_, err := ExecuteWrite(context.Background(), pool, "CREATE TABLE t2 (id INT)", Options{Write: true, DDL: true})
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 // TestExecuteTxnCommitFailure 验证事务全部 Exec 成功但 Commit 失败（如死锁检测）
 // 时，error 被正确包装为 ErrSQL 哨兵且携带原始错误信息。
 // write.go 的 Commit 失败路径用 fmt.Errorf("%w: %w", ErrSQL, err) 包装，

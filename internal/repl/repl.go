@@ -4,10 +4,14 @@ package repl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/AllenMuu/mysql-cli/internal/config"
 	"github.com/AllenMuu/mysql-cli/internal/conn"
 	"github.com/AllenMuu/mysql-cli/internal/format"
 	"github.com/AllenMuu/mysql-cli/internal/query"
@@ -32,27 +36,81 @@ type Config struct {
 
 const exitCode = -1
 
-// Start runs the REPL loop. Returns a process exit code (0 on normal exit).
-func Start(cfg Config) int {
-	rl, err := readline.NewEx(&readline.Config{
+// ErrInitFailed 表示 readline 初始化失败（如终端不可用）。cli 层用
+// errors.Is 识别该哨兵并返回非零退出码（exit 11），而非把初始化失败
+// 伪装成正常退出（exit 0）。
+var ErrInitFailed = errors.New("repl: initialization failed")
+
+// newReadline 是 readline 构造器的注入点，测试可替换以模拟初始化失败。
+var newReadline = func(cfg *readline.Config) (*readline.Instance, error) {
+	return readline.NewEx(cfg)
+}
+
+// legacyHistoryPath 是旧版本（历史路径迁移前）REPL 的历史文件路径：落在
+// /tmp、多用户可读且可能包含敏感 SQL。var 而非 const，便于测试注入路径。
+var legacyHistoryPath = "/tmp/mysql-cli.history"
+
+// removeLegacyHistory best-effort 删除旧版历史文件。清理失败（权限不足、
+// 并发占用、平台差异等）一律静默忽略：历史清理不能阻断 REPL 启动。
+func removeLegacyHistory(path string) {
+	if path == "" {
+		return
+	}
+	_ = os.Remove(path)
+}
+
+// historyPath 返回 REPL 历史文件路径（~/.config/mysql-cli/history），并确保
+// 目录以 0700 创建、文件以 0600 创建。历史记录可能包含敏感 SQL，不能写在
+// 多用户可读的 /tmp（symlink 预置、多实例互踩、信息泄露）。home 不可用或
+// 文件系统失败时返回 ""：降级为不落盘历史，REPL 照常运行。
+func historyPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	dir := filepath.Join(home, filepath.Dir(config.RelConfigPath))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return ""
+	}
+	p := filepath.Join(dir, "history")
+	if _, err := os.Stat(p); err == nil {
+		_ = os.Chmod(p, 0o600) // 收紧历史遗留的宽权限（best-effort）
+	} else if os.IsNotExist(err) {
+		if err := os.WriteFile(p, []byte{}, 0o600); err != nil {
+			return ""
+		}
+	} else {
+		return "" // 无法确认文件状态（权限等），放弃落盘历史
+	}
+	return p
+}
+
+// Start runs the REPL loop. Returns (exitCode, err)：err 非 nil 仅当
+// readline 初始化失败（错误链携带 ErrInitFailed 与原因）；正常退出
+// （EOF、\q）返回 (0, nil)。
+func Start(cfg Config) (int, error) {
+	// 启动即清理旧版 /tmp/mysql-cli.history（多用户可读、含敏感 SQL）；
+	// best-effort，失败不影响 REPL 启动。
+	removeLegacyHistory(legacyHistoryPath)
+	rl, err := newReadline(&readline.Config{
 		Prompt:      "mysql> ",
-		HistoryFile: "/tmp/mysql-cli.history",
+		HistoryFile: historyPath(),
 	})
 	if err != nil {
-		return 1
+		return 1, fmt.Errorf("%w: %w", ErrInitFailed, err)
 	}
 	defer rl.Close()
 
 	for {
 		line, err := rl.Readline()
 		if err == io.EOF {
-			return 0
+			return 0, nil
 		}
 		if err != nil {
-			return 0
+			return 0, nil
 		}
 		if runOnce(line, cfg) {
-			return 0
+			return 0, nil
 		}
 	}
 }
@@ -69,9 +127,10 @@ func runOnce(line string, cfg Config) bool {
 		}
 		return isExit(code)
 	}
-	if looksLikeSQL(line) {
-		runSQL(cfg, line)
-	}
+	// 非 \ 命令的输入一律交给 runSQL，与 CLI query 子命令的分流对齐：
+	// unknown 类语句（WITH CTE / SET / USE 等）走 Execute，由 safety 闸门
+	// 或服务端给出明确错误，不再被静默丢弃。
+	runSQL(cfg, line)
 	return false
 }
 
@@ -145,14 +204,6 @@ func runSlash(cfg Config, fn func(*conn.Pool) (result.Result, error)) (int, stri
 		return 0, err.Error()
 	}
 	return 0, strings.TrimSpace(out)
-}
-
-// looksLikeSQL 判断输入是否像 SQL。直接复用 safety.Classify，避免与 safety
-// 的前缀表（read/dml/ddl）重复维护导致漂移。注意：WITH 开头的 CTE 语句在
-// safety 中被保守归入 CategoryUnknown，因此这里也不认为它"像 SQL"，由
-// runOnce 走非 SQL 分支处理。
-func looksLikeSQL(s string) bool {
-	return safety.Classify(s) != safety.CategoryUnknown
 }
 
 func isExit(code int) bool { return code == exitCode }

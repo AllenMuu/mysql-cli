@@ -212,6 +212,39 @@ func TestLoad_NoConfigReturnsNil(t *testing.T) {
 	assert.Nil(t, cfg)
 }
 
+// TestLoad_ExplicitConfigMissingErrors 验证 A4：显式指定的配置文件
+// （--config）不存在时必须返回挂 ErrConfig 哨兵的错误（拼错路径若被静默
+// 忽略，进程会连到错误的库）。
+func TestLoad_ExplicitConfigMissingErrors(t *testing.T) {
+	home := t.TempDir()
+	missing := filepath.Join(home, "no-such-file.toml")
+	_, _, err := Load(LoadOpts{ConfigFlag: missing, Home: home, Cwd: home})
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrConfig)
+	assert.Contains(t, err.Error(), missing)
+}
+
+// TestLoad_EnvConfigMissingErrors 验证 A4 的 MYSQL_CLI_CONFIG 路径：
+// 同样必须报错而非静默忽略。
+func TestLoad_EnvConfigMissingErrors(t *testing.T) {
+	home := t.TempDir()
+	missing := filepath.Join(home, "no-such-env-file.toml")
+	_, _, err := Load(LoadOpts{EnvConfig: missing, Home: home, Cwd: home})
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrConfig)
+}
+
+// TestLoad_GlobalMissingStillSilent 对照：global/project 默认路径不存在
+// 仍是合法常态，Load 静默返回 nil（原有行为不变）。
+func TestLoad_GlobalMissingStillSilent(t *testing.T) {
+	home := t.TempDir()
+	cwd := filepath.Join(home, "proj")
+	assert.NoError(t, os.MkdirAll(cwd, 0o755))
+	cfg, _, err := Load(LoadOpts{Cwd: cwd, Home: home})
+	assert.NoError(t, err)
+	assert.Nil(t, cfg)
+}
+
 func TestLoad_TomlSyntaxError(t *testing.T) {
 	home := t.TempDir()
 	bad := filepath.Join(home, "bad.toml")
@@ -233,6 +266,19 @@ func TestAddTrust_Idempotent(t *testing.T) {
 	list, err := ReadTrusted(home)
 	assert.NoError(t, err)
 	assert.Equal(t, []string{normalizePath(root)}, list)
+}
+
+// TestAddTrust_ReadErrorPropagates 验证 A12：ReadTrusted 失败（IO 故障）时
+// AddTrust 必须向上返回错误，而不是吞掉错误继续覆盖写——那会把已有的全部
+// trust 条目抹掉。
+func TestAddTrust_ReadErrorPropagates(t *testing.T) {
+	home := t.TempDir()
+	// 把 .config 造成普通文件：读取 <home>/.config/mysql-cli/trusted 时
+	// 得到 ENOTDIR（非 NotExist），ReadTrusted 返回错误。
+	assert.NoError(t, os.WriteFile(filepath.Join(home, ".config"), []byte("not a dir"), 0o600))
+	err := AddTrust(home, filepath.Join(home, "proj"))
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrConfig)
 }
 
 func TestIsTrusted_HitAndMiss(t *testing.T) {
