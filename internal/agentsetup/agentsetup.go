@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
-	"strings"
 )
 
 //go:embed templates/mysql-write-guard.py
@@ -333,10 +333,23 @@ func allHookGroups(items []any) bool {
 	return true
 }
 
-// hookGuardMarker is the command signature of the guard scripts this package
-// installs; hook entries whose command references it are "ours" (even after
-// user tweaks).
-const hookGuardMarker = "mysql-write-guard"
+// hookGuardMarkerRe matches the guard script paths this package installs,
+// e.g. `python3 "$HOME/.claude/hooks/mysql-write-guard.py"`. The mandatory
+// leading path separator plus the .py/.ts extension keep user-owned scripts
+// whose names merely CONTAIN the marker (like `my-mysql-write-guard.py`)
+// from being misclassified as ours.
+var hookGuardMarkerRe = regexp.MustCompile(`[\\/]mysql-write-guard\.(?:py|ts)\b`)
+
+// isOurHookEntry reports whether a single hook entry references the guard
+// script we install (even after user tweaks to unrelated fields).
+func isOurHookEntry(entry any) bool {
+	hm, ok := entry.(map[string]any)
+	if !ok {
+		return false
+	}
+	cmd, _ := hm["command"].(string)
+	return hookGuardMarkerRe.MatchString(cmd)
+}
 
 // carriesOurHook reports whether a hook group's command list references the
 // guard script we install.
@@ -346,11 +359,7 @@ func carriesOurHook(group map[string]any) bool {
 		return false
 	}
 	for _, h := range hooks {
-		hm, ok := h.(map[string]any)
-		if !ok {
-			continue
-		}
-		if cmd, _ := hm["command"].(string); strings.Contains(cmd, hookGuardMarker) {
+		if isOurHookEntry(h) {
 			return true
 		}
 	}
@@ -358,8 +367,10 @@ func carriesOurHook(group map[string]any) bool {
 }
 
 // mergeHookGroups merges our hook groups into dst: an existing group with the
-// same matcher that carries our guard script is REPLACED by the incoming one
-// (keeping its position); anything else is appended unless JSON-identical.
+// same matcher that carries our guard script is updated IN PLACE -- its hooks
+// array is merged entry by entry (see mergeHookGroupHooks) so user-owned
+// entries in the same group survive a re-install; anything else is appended
+// unless JSON-identical.
 func mergeHookGroups(dst, src []any) []any {
 	out := make([]any, len(dst))
 	copy(out, dst)
@@ -377,7 +388,7 @@ func mergeHookGroups(dst, src []any) []any {
 			}
 			dmMatcher, _ := dm["matcher"].(string)
 			if dmMatcher == matcher && carriesOurHook(dm) {
-				out[i] = s
+				out[i] = mergeHookGroupHooks(dm, sm)
 				replaced = true
 				break
 			}
@@ -385,6 +396,61 @@ func mergeHookGroups(dst, src []any) []any {
 		if !replaced && !containsCanon(out, s) {
 			out = append(out, s)
 		}
+	}
+	return out
+}
+
+// mergeHookGroupHooks merges the hooks array of an existing group (dst) with
+// the incoming fragment's (src). Our own previous entries (matched by the
+// guard marker, possibly user-tweaked) are replaced by the incoming versions
+// in place; user-owned entries in the same group are preserved; incoming
+// entries without an in-place slot are appended (deduped). All other
+// group-level keys come from src, since the fragment is authoritative for
+// them.
+func mergeHookGroupHooks(dst, src map[string]any) map[string]any {
+	merged := make(map[string]any, len(dst)+len(src))
+	for k, v := range dst {
+		merged[k] = v
+	}
+	for k, v := range src {
+		if k != "hooks" {
+			merged[k] = v
+		}
+	}
+	dh, _ := dst["hooks"].([]any)
+	sh, _ := src["hooks"].([]any)
+	hooks := make([]any, 0, len(dh)+len(sh))
+	placed := 0 // number of incoming entries consumed by in-place replacement
+	for _, d := range dh {
+		if isOurHookEntry(d) && placed < len(sh) {
+			hooks = append(hooks, sh[placed]) // our old entry -> fresh version
+			placed++
+			continue
+		}
+		hooks = append(hooks, d) // user-owned entry (or surplus ours) kept
+	}
+	for _, s := range sh[placed:] {
+		if !containsCanon(hooks, s) {
+			hooks = append(hooks, s)
+		}
+	}
+	// Collapse exact duplicates (e.g. a user hand-duplicating our entry).
+	merged["hooks"] = dedupAny(hooks)
+	return merged
+}
+
+// dedupAny returns items with later JSON-identical duplicates removed, order
+// preserved.
+func dedupAny(items []any) []any {
+	seen := make(map[string]bool, len(items))
+	out := make([]any, 0, len(items))
+	for _, v := range items {
+		c := canon(v)
+		if seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, v)
 	}
 	return out
 }

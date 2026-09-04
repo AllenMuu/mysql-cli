@@ -164,7 +164,11 @@ func newRootCmd(g *Globals) *cobra.Command {
 			return err
 		}
 		defer pool.Close()
-		code, rerr := repl.Start(repl.Config{
+		// repl.Start 的契约固定为 (0, nil)（正常退出）/ (1, err)（初始化
+		// 失败），code 无需检查：不存在 "非零 code 且 err 为 nil" 的路径。
+		// 曾有一个 code != 0 的防御分支，但它无哨兵、会被 mapError 兜底
+		// 误映射成 exit 10（config），已删除。
+		_, rerr := repl.Start(repl.Config{
 			Pool:       pool,
 			Opts:       g.opts(),
 			Out:        g.out,
@@ -176,9 +180,6 @@ func newRootCmd(g *Globals) *cobra.Command {
 			// repl.ErrInitFailed 哨兵，mapError 将其映射为 exit 11。
 			fmt.Fprintln(g.eout, formatErr(rerr, g.Format))
 			return rerr
-		}
-		if code != 0 {
-			return fmt.Errorf("repl exited with code %d", code)
 		}
 		return nil
 	}

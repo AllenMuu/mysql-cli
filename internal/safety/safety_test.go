@@ -51,8 +51,12 @@ func TestCheckCTEPrefixReadonlyRejects(t *testing.T) {
 	_, err := Check("WITH x AS (SELECT 1) DELETE FROM t", CheckOptions{})
 	assert.ErrorIs(t, err, ErrReadonlyViolation)
 
-	// 加 --write 后放行（CategoryUnknown 不走破坏性判断）。
-	d, err := Check("WITH x AS (SELECT 1) DELETE FROM t", CheckOptions{Write: true})
+	// 加 --write 后仍需 --yes：CTE 前缀的全表 DELETE 与裸 DELETE FROM t
+	// 一样是破坏性操作（F1）。
+	_, err = Check("WITH x AS (SELECT 1) DELETE FROM t", CheckOptions{Write: true})
+	assert.ErrorIs(t, err, ErrDestructiveRequiresYes)
+
+	d, err := Check("WITH x AS (SELECT 1) DELETE FROM t", CheckOptions{Write: true, Yes: true})
 	assert.NoError(t, err)
 	assert.True(t, d.Allowed)
 	assert.Equal(t, CategoryUnknown, d.Category)
@@ -196,15 +200,68 @@ func TestClassifyExplainAnalyze(t *testing.T) {
 }
 
 // TestCheckExplainAnalyzeReadonlyRejects 验证只读模式下 EXPLAIN ANALYZE 被
-// 闸门拦截，加 --write 后放行。
+// 闸门拦截，加 --write --yes 后放行（EXPLAIN ANALYZE 会实际执行全表 DELETE，
+// F1）。
 func TestCheckExplainAnalyzeReadonlyRejects(t *testing.T) {
 	_, err := Check("EXPLAIN ANALYZE DELETE FROM t", CheckOptions{})
 	assert.ErrorIs(t, err, ErrReadonlyViolation)
 
-	d, err := Check("EXPLAIN ANALYZE DELETE FROM t", CheckOptions{Write: true})
+	_, err = Check("EXPLAIN ANALYZE DELETE FROM t", CheckOptions{Write: true})
+	assert.ErrorIs(t, err, ErrDestructiveRequiresYes)
+
+	d, err := Check("EXPLAIN ANALYZE DELETE FROM t", CheckOptions{Write: true, Yes: true})
 	assert.NoError(t, err)
 	assert.True(t, d.Allowed)
 	assert.Equal(t, CategoryUnknown, d.Category)
+}
+
+// TestCheckUnknownDestructive（F1）：unknown 类语句（WITH CTE / EXPLAIN
+// ANALYZE 前缀）的语句体含 DELETE FROM / UPDATE ... SET 动词时，与裸
+// DELETE FROM t 一样要求 --write --yes。
+func TestCheckUnknownDestructive(t *testing.T) {
+	destructive := []string{
+		"EXPLAIN ANALYZE DELETE FROM t",
+		"EXPLAIN ANALYZE UPDATE t SET a=1",
+		"explain analyze delete from t",
+		"WITH c AS (SELECT 1) DELETE FROM t",
+		"WITH c AS (SELECT 1) UPDATE t SET a=1",
+		"WITH RECURSIVE r(n) AS (SELECT 1) DELETE FROM t",
+		// CTE 体内的 WHERE 不能豁免最终的 DELETE：这是全表删除。
+		"WITH x AS (SELECT * FROM src WHERE id=1) DELETE FROM t",
+		// 定向 DELETE 也要求 --yes：unknown 场景下 WHERE 归属无法可靠判定，
+		// 宁可误拦（与裸 DELETE ... WHERE 的 DML 语义不同）。
+		"WITH c AS (SELECT 1) DELETE FROM t WHERE id=1",
+	}
+	for _, sql := range destructive {
+		_, err := Check(sql, CheckOptions{Write: true})
+		assert.ErrorIs(t, err, ErrDestructiveRequiresYes, sql)
+		d, err := Check(sql, CheckOptions{Write: true, Yes: true})
+		assert.NoError(t, err, sql)
+		assert.True(t, d.Allowed, sql)
+	}
+
+	nonDestructive := []string{
+		// CTE-SELECT：无破坏性动词，--write 即可。
+		"WITH c AS (SELECT 1) SELECT * FROM c",
+		"WITH RECURSIVE r(n) AS (SELECT 1) SELECT * FROM r",
+		// EXPLAIN ANALYZE 只读 SELECT：无破坏性动词。
+		"EXPLAIN ANALYZE SELECT * FROM t",
+		// 一般 unknown 语句不受影响。
+		"CALL foo()",
+		"SET @x=1",
+		// 字面量里的破坏性动词不算（StripLiterals）。
+		"WITH c AS (SELECT 'DELETE FROM t') SELECT * FROM c",
+		`SET @note = 'update t set a=1'`,
+		// 标识符含 update/delete 字样但不构成独立动词。
+		"SET @last_update = (SELECT updated_at FROM t)",
+		// INSERT（含 WITH 前缀）不是破坏性动词，与裸 INSERT 语义一致。
+		"WITH c AS (SELECT 1) INSERT INTO t VALUES (1)",
+	}
+	for _, sql := range nonDestructive {
+		d, err := Check(sql, CheckOptions{Write: true})
+		assert.NoError(t, err, sql)
+		assert.True(t, d.Allowed, sql)
+	}
 }
 
 // TestFirstKeywordCRLF 验证 A10：CRLF 输入的首词不被切成 "SELECT\r"。

@@ -151,33 +151,47 @@ test('connectViaProxy rejects when the proxy denies CONNECT', async () => {
   }
 });
 
+// rmTemp removes mkdtempSync scratch dirs (no-op when already gone), so tests
+// do not leak temp directories.
+function rmTemp(...dirs) {
+  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+}
+
 test('extractArchive extracts a tar.gz fixture into outDir', () => {
   const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-src-'));
   const archiveDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-arc-'));
   const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-ext-'));
-  fs.writeFileSync(path.join(srcDir, 'mysql-cli'), '#!/bin/sh\necho fake\n');
-  const archive = path.join(archiveDir, 'fixture.tar.gz');
-  execFileSync('tar', ['-czf', archive, '-C', srcDir, 'mysql-cli']);
-  extractArchive(archive, extractDir);
-  assert.ok(fs.existsSync(path.join(extractDir, 'mysql-cli')), 'binary should be extracted');
+  try {
+    fs.writeFileSync(path.join(srcDir, 'mysql-cli'), '#!/bin/sh\necho fake\n');
+    const archive = path.join(archiveDir, 'fixture.tar.gz');
+    execFileSync('tar', ['-czf', archive, '-C', srcDir, 'mysql-cli']);
+    extractArchive(archive, extractDir);
+    assert.ok(fs.existsSync(path.join(extractDir, 'mysql-cli')), 'binary should be extracted');
+  } finally {
+    rmTemp(srcDir, archiveDir, extractDir);
+  }
 });
 
 test('installBinaryFromArchive extracts only the binary into outDir', () => {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-d9-work-'));
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-d9-out-'));
-  const srcDir = path.join(workDir, 'src');
-  fs.mkdirSync(srcDir);
-  fs.writeFileSync(path.join(srcDir, 'mysql-cli'), '#!/bin/sh\necho fake\n');
-  fs.writeFileSync(path.join(srcDir, 'LICENSE'), 'MIT\n');
-  const archive = path.join(workDir, 'fixture.tar.gz');
-  execFileSync('tar', ['-czf', archive, '-C', srcDir, 'mysql-cli', 'LICENSE']);
-  const mapped = { goos: 'linux', goarch: 'amd64', ext: 'tar.gz', asset: 'mysql-cli_linux_amd64.tar.gz' };
-  const binPath = installBinaryFromArchive(fs.readFileSync(archive), mapped, outDir);
-  assert.equal(binPath, path.join(outDir, 'mysql-cli'));
-  assert.ok(fs.existsSync(binPath), 'binary should be installed');
-  // Only the binary lands in outDir: no LICENSE leak, no leftover temp dir.
-  assert.deepEqual(fs.readdirSync(outDir).sort(), ['mysql-cli']);
-  if (process.platform !== 'win32') {
-    assert.ok(fs.statSync(binPath).mode & 0o111, 'binary should be executable');
+  try {
+    const srcDir = path.join(workDir, 'src');
+    fs.mkdirSync(srcDir);
+    fs.writeFileSync(path.join(srcDir, 'mysql-cli'), '#!/bin/sh\necho fake\n');
+    fs.writeFileSync(path.join(srcDir, 'LICENSE'), 'MIT\n');
+    const archive = path.join(workDir, 'fixture.tar.gz');
+    execFileSync('tar', ['-czf', archive, '-C', srcDir, 'mysql-cli', 'LICENSE']);
+    const mapped = { goos: 'linux', goarch: 'amd64', ext: 'tar.gz', asset: 'mysql-cli_linux_amd64.tar.gz' };
+    const binPath = installBinaryFromArchive(fs.readFileSync(archive), mapped, outDir);
+    assert.equal(binPath, path.join(outDir, 'mysql-cli'));
+    assert.ok(fs.existsSync(binPath), 'binary should be installed');
+    // Only the binary lands in outDir: no LICENSE leak, no leftover temp dir.
+    assert.deepEqual(fs.readdirSync(outDir).sort(), ['mysql-cli']);
+    if (process.platform !== 'win32') {
+      assert.ok(fs.statSync(binPath).mode & 0o111, 'binary should be executable');
+    }
+  } finally {
+    rmTemp(workDir, outDir);
   }
 });

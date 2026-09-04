@@ -46,6 +46,19 @@ var newReadline = func(cfg *readline.Config) (*readline.Instance, error) {
 	return readline.NewEx(cfg)
 }
 
+// legacyHistoryPath 是旧版本（历史路径迁移前）REPL 的历史文件路径：落在
+// /tmp、多用户可读且可能包含敏感 SQL。var 而非 const，便于测试注入路径。
+var legacyHistoryPath = "/tmp/mysql-cli.history"
+
+// removeLegacyHistory best-effort 删除旧版历史文件。清理失败（权限不足、
+// 并发占用、平台差异等）一律静默忽略：历史清理不能阻断 REPL 启动。
+func removeLegacyHistory(path string) {
+	if path == "" {
+		return
+	}
+	_ = os.Remove(path)
+}
+
 // historyPath 返回 REPL 历史文件路径（~/.config/mysql-cli/history），并确保
 // 目录以 0700 创建、文件以 0600 创建。历史记录可能包含敏感 SQL，不能写在
 // 多用户可读的 /tmp（symlink 预置、多实例互踩、信息泄露）。home 不可用或
@@ -76,6 +89,9 @@ func historyPath() string {
 // readline 初始化失败（错误链携带 ErrInitFailed 与原因）；正常退出
 // （EOF、\q）返回 (0, nil)。
 func Start(cfg Config) (int, error) {
+	// 启动即清理旧版 /tmp/mysql-cli.history（多用户可读、含敏感 SQL）；
+	// best-effort，失败不影响 REPL 启动。
+	removeLegacyHistory(legacyHistoryPath)
 	rl, err := newReadline(&readline.Config{
 		Prompt:      "mysql> ",
 		HistoryFile: historyPath(),

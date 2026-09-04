@@ -52,6 +52,14 @@ var (
 	// 会被 IsDestructive 误判为非破坏性，但仍需 --write 才能执行。这是有意的
 	// 保守简化，避免实现 SQL 语义分析。
 	whereRe = regexp.MustCompile(`(?i)\bWHERE\b`)
+	// unknownDestructiveRe 在 unknown 类语句中检测破坏性动词。unknown 语句
+	// 包括 WITH CTE 前缀与 EXPLAIN ANALYZE 前缀的写操作（MySQL 8 会实际
+	// 执行语句体）。动词出现在语句体任何位置（含 CTE 体内）都按破坏性处理：
+	//   - CTE 场景下 WHERE 的归属无法可靠判定（WITH x AS (SELECT ... WHERE
+	//     id=1) DELETE FROM t 是全表删除），因此不复用 IsDestructive 的
+	//     WHERE 豁免，宁可误拦；
+	//   - 须配合 StripLiterals 使用，字符串字面量里的 "delete from" 不算。
+	unknownDestructiveRe = regexp.MustCompile(`(?is)\bDELETE\s+FROM\b|\bUPDATE\b.*?\bSET\b`)
 )
 
 // CheckOptions carries the user's explicit permission flags.
@@ -117,9 +125,18 @@ func IsDestructive(sql string) bool {
 	return false
 }
 
-// Check enforces the gate: read always allowed; unknown statements need Write;
-// DML needs Write and, if destructive, Yes; DDL needs Write+DDL and, if
-// destructive, Yes.
+// isDestructiveUnknown 对 unknown 类语句做 best-effort 破坏性检测：
+// StripLiterals 后的语句体中出现 DELETE FROM / UPDATE ... SET 动词即视为
+// 破坏性（见 unknownDestructiveRe 的注释）。EXPLAIN ANALYZE DELETE FROM t
+// 与 WITH x AS (...) DELETE FROM t 因此和裸 DELETE FROM t 一样要求 --yes。
+func isDestructiveUnknown(sql string) bool {
+	return unknownDestructiveRe.MatchString(StripLiterals(sql))
+}
+
+// Check enforces the gate: read always allowed; unknown statements need Write
+// and, when their body carries destructive verbs (WITH-CTE or EXPLAIN ANALYZE
+// prefixed DELETE/UPDATE), Yes; DML needs Write and, if destructive, Yes; DDL
+// needs Write+DDL and, if destructive, Yes.
 func Check(sql string, opts CheckOptions) (*Decision, error) {
 	cat := Classify(sql)
 	switch cat {
@@ -128,6 +145,9 @@ func Check(sql string, opts CheckOptions) (*Decision, error) {
 	case CategoryUnknown:
 		if !opts.Write {
 			return nil, ErrReadonlyViolation
+		}
+		if isDestructiveUnknown(sql) && !opts.Yes {
+			return nil, ErrDestructiveRequiresYes
 		}
 		return &Decision{Allowed: true, Category: cat}, nil
 	case CategoryDML:

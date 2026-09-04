@@ -177,6 +177,50 @@ func TestWarnUntrustedExplicitConfig_Suppressed(t *testing.T) {
 	assert.Empty(t, stderr2.String())
 }
 
+// TestWarnUntrustedExplicitConfig_SymlinkIntoCwd（F5a）：绝对路径本身在
+// cwd 之外、但经 symlink 指向 cwd 内文件时同样告警。
+func TestWarnUntrustedExplicitConfig_SymlinkIntoCwd(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	writeExplicitConfig(t, proj)
+	writeExplicitConfig(t, home) // 对照组：symlink 指向 home 内文件
+
+	linkIn := filepath.Join(home, "link-into-cwd.toml")
+	require.NoError(t, os.Symlink(filepath.Join(proj, "config.toml"), linkIn))
+	linkOut := filepath.Join(home, "link-outside.toml")
+	require.NoError(t, os.Symlink(filepath.Join(home, "config.toml"), linkOut))
+
+	var stderr bytes.Buffer
+	g := &Globals{eout: &stderr}
+	g.warnUntrustedExplicitConfig(linkIn, proj, home)
+	assert.Contains(t, stderr.String(), "WARN")
+
+	var stderrOut bytes.Buffer
+	gOut := &Globals{eout: &stderrOut}
+	gOut.warnUntrustedExplicitConfig(linkOut, proj, home)
+	assert.Empty(t, stderrOut.String(), "symlink pointing outside cwd/home stays silent")
+}
+
+// TestWarnUntrustedExplicitConfig_ProjectRootFromSubdir（F5b）：agent 在
+// 项目子目录运行、--config 指向项目根的 config 时同样告警。
+func TestWarnUntrustedExplicitConfig_ProjectRootFromSubdir(t *testing.T) {
+	home := t.TempDir()
+	proj := t.TempDir()
+	sub := filepath.Join(proj, "sub")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	// 项目根存在 .config/mysql-cli/config.toml，DiscoverProject 才能从子目录
+	// 向上发现项目根。
+	cfgDir := filepath.Join(proj, ".config", "mysql-cli")
+	require.NoError(t, os.MkdirAll(cfgDir, 0o755))
+	cfgFile := filepath.Join(cfgDir, "config.toml")
+	require.NoError(t, os.WriteFile(cfgFile, []byte("default = \"phish\"\n"), 0o600))
+
+	var stderr bytes.Buffer
+	g := &Globals{eout: &stderr}
+	g.warnUntrustedExplicitConfig(cfgFile, sub, home)
+	assert.Contains(t, stderr.String(), "WARN")
+}
+
 func TestConfigTrust_NonTTYRequiresYes(t *testing.T) {
 	orig := stdinIsTerminal
 	stdinIsTerminal = func() bool { return false }

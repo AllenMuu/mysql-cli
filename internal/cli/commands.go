@@ -125,11 +125,12 @@ func (g *Globals) warnUntrustedProject(entries []config.PathEntry, merged *confi
 }
 
 // warnUntrustedExplicitConfig 在 stderr 告警（非阻断）：显式 --config /
-// MYSQL_CLI_CONFIG 指向的路径是相对路径、或解析后位于 cwd 之下，且该
-// 项目未被 trust 时，该文件完全绕过 trust 机制被 loader 直接加载
-// （loader 把显式路径标记 Trusted:true）。恶意 repo 可以诱导 agent 传
-// 相对 --config 加载钓鱼配置（如 password="${MYSQL_PASSWORD}" 展开后
-// 凭据外泄）。保守方案：只告警不阻断，仍加载该文件。
+// MYSQL_CLI_CONFIG 指向的路径是相对路径、或解析后位于 cwd / 项目根之下
+// （含经 symlink 指回其中的绝对路径），且该项目未被 trust 时，该文件完全
+// 绕过 trust 机制被 loader 直接加载（loader 把显式路径标记 Trusted:true）。
+// 恶意 repo 可以诱导 agent 传相对 --config 加载钓鱼配置（如
+// password="${MYSQL_PASSWORD}" 展开后凭据外泄）。保守方案：只告警不阻断，
+// 仍加载该文件。
 // 信任判定复用 config 的 trust 存储：取从 cwd 向上发现的项目根（找不到
 // 时退化为 cwd 本身）。--no-trust-warn / MYSQL_CLI_NO_TRUST_WARN=1 可抑制。
 func (g *Globals) warnUntrustedExplicitConfig(explicit, cwd, home string) {
@@ -148,14 +149,17 @@ func (g *Globals) warnUntrustedExplicitConfig(explicit, cwd, home string) {
 	if _, err := os.Stat(abs); err != nil {
 		return
 	}
-	// 触发条件（与审查结论一致）：相对路径（相对 cwd 解析），或绝对路径
-	// 但位于 cwd 之下。指向 home 等用户自有区域的绝对路径不告警。
-	if filepath.IsAbs(explicit) && !isUnderDir(abs, cwd) {
-		return
-	}
+	// 项目根：agent 常在项目子目录运行，--config 指向项目根下的文件时同样
+	// 要告警；找不到项目根时退回 cwd（原行为）。
 	root := cwd
 	if r, _, found := config.DiscoverProject(cwd, home); found {
 		root = r
+	}
+	// 触发条件：相对路径（相对 cwd 解析），或绝对路径但位于 cwd 或项目根
+	// 之下。symlink 归一后再比较，防止绝对路径本身在目录外、但经 symlink
+	// 指回目录内文件从而绕过告警。指向 home 等用户自有区域的绝对路径不告警。
+	if filepath.IsAbs(explicit) && !underDirAny(abs, cwd, root) {
+		return
 	}
 	if config.IsTrusted(home, root) {
 		return
@@ -164,6 +168,28 @@ func (g *Globals) warnUntrustedExplicitConfig(explicit, cwd, home string) {
 		"If this file comes from an untrusted repo, a human must review its contents (it may redirect credentials via ${ENV} placeholders) before use. "+
 		"Do not auto-trust.", explicit)
 	fmt.Fprintln(g.eout, msg)
+}
+
+// underDirAny 报告 path（symlink 归一后）是否位于任一基准目录之下。基准
+// 目录也需归一：cwd / 项目根自身含 symlink 组件时（如 macOS 的
+// /var -> /private/var），一侧解析一侧不解析会永远比较不相等。
+func underDirAny(path string, dirs ...string) bool {
+	resolved := evalSymlinksBestEffort(path)
+	for _, d := range dirs {
+		if isUnderDir(resolved, evalSymlinksBestEffort(d)) {
+			return true
+		}
+	}
+	return false
+}
+
+// evalSymlinksBestEffort 归一路径中的 symlink；失败（路径不存在等）时
+// 返回原路径。
+func evalSymlinksBestEffort(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
 }
 
 // isUnderDir 报告 path 是否位于 dir 之下（或等于 dir）。path 与 dir 都
@@ -267,8 +293,15 @@ func newQueryCmd(g *Globals) *cobra.Command {
 			ctx := context.Background()
 			var r result.Result
 			// Route by classification: read queries use Execute (rows),
-			// DML/DDL use ExecuteWrite (rows affected). This avoids running
-			// writes through QueryContext, which the driver rejects.
+			// DML/DDL use ExecuteWrite (txn-wrapped Exec -> rows affected).
+			// NOTE: go-sql-driver does NOT reject write statements sent
+			// through QueryContext -- the statement is actually executed
+			// (autocommit) and an empty result set comes back, so
+			// RowsAffected is silently dropped. Unknown statements (WITH
+			// CTE / EXPLAIN ANALYZE / SET / ...) ride the read route because
+			// they can return rows (e.g. EXPLAIN ANALYZE's plan output); an
+			// agent running a WITH-prefixed DML under --write should prefer
+			// the bare DML form (or `txn`) so rows_affected is reported.
 			switch safety.Classify(sqlText) {
 			case safety.CategoryRead, safety.CategoryUnknown:
 				opts := g.opts()

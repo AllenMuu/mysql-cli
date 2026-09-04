@@ -169,3 +169,44 @@ func TestHistoryPathNoHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	assert.Empty(t, historyPath())
 }
+
+// TestRemoveLegacyHistory（F6）：旧版 /tmp/mysql-cli.history 被 best-effort
+// 清理；文件不存在或路径为空时为静默 no-op。
+func TestRemoveLegacyHistory(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "mysql-cli.history")
+	require.NoError(t, os.WriteFile(p, []byte("SELECT secret"), 0o644))
+
+	removeLegacyHistory(p)
+	_, err := os.Stat(p)
+	assert.True(t, os.IsNotExist(err), "legacy history file removed")
+
+	// 不存在 / 空路径：静默 no-op，不 panic 不报错。
+	removeLegacyHistory(filepath.Join(dir, "nope"))
+	removeLegacyHistory("")
+}
+
+// TestStartRemovesLegacyHistory（F6）：Start 启动时清理旧版历史文件；即便
+// readline 初始化失败，清理也已先行发生。
+func TestStartRemovesLegacyHistory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "mysql-cli.history")
+	require.NoError(t, os.WriteFile(p, []byte("SELECT secret"), 0o644))
+
+	origPath, origNew := legacyHistoryPath, newReadline
+	legacyHistoryPath = p
+	newReadline = func(cfg *readline.Config) (*readline.Instance, error) {
+		return nil, errors.New("tty boom")
+	}
+	t.Cleanup(func() {
+		legacyHistoryPath = origPath
+		newReadline = origNew
+	})
+
+	_, _ = Start(Config{})
+	_, err := os.Stat(p)
+	assert.True(t, os.IsNotExist(err), "legacy history cleaned when Start runs")
+}

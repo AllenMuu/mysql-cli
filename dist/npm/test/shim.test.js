@@ -24,15 +24,25 @@ test('persistentDir returns AppData\\mysql-cli on windows', () => {
   assert.equal(persistentDir('win32', {}, 'C:\\Users\\u'), 'C:\\Users\\u\\AppData\\Local\\mysql-cli');
 });
 
+// rmTemp removes mkdtempSync scratch dirs (no-op when already gone), so tests
+// do not leak temp directories.
+function rmTemp(...dirs) {
+  for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+}
+
 test('doInstall copies the bundled binary to the dest dir and chmods it', () => {
   const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-shim-src-'));
   const destDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-shim-dst-'));
-  const exeName = process.platform === 'win32' ? 'mysql-cli.exe' : 'mysql-cli';
-  const bundled = path.join(srcDir, exeName);
-  fs.writeFileSync(bundled, '#!/bin/sh\necho fake\n');
-  const dest = doInstall(bundled, destDir);
-  assert.ok(fs.existsSync(dest), 'dest binary exists');
-  assert.equal(path.dirname(dest), destDir);
+  try {
+    const exeName = process.platform === 'win32' ? 'mysql-cli.exe' : 'mysql-cli';
+    const bundled = path.join(srcDir, exeName);
+    fs.writeFileSync(bundled, '#!/bin/sh\necho fake\n');
+    const dest = doInstall(bundled, destDir);
+    assert.ok(fs.existsSync(dest), 'dest binary exists');
+    assert.equal(path.dirname(dest), destDir);
+  } finally {
+    rmTemp(srcDir, destDir);
+  }
 });
 
 test('signalNumber maps close-callback signal names via os.constants.signals', () => {
@@ -71,11 +81,15 @@ function runShim(bundledDir) {
 
 test('shim exits 128+signal when the child is killed by a signal', { skip: process.platform === 'win32' }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-sig-'));
-  fs.writeFileSync(path.join(dir, 'mysql-cli'), '#!/bin/sh\nkill -TERM $$\n', { mode: 0o755 });
-  const child = runShim(dir);
-  const [code, signal] = await new Promise((resolve) => child.on('close', (c, s) => resolve([c, s])));
-  assert.equal(signal, null);
-  assert.equal(code, 128 + os.constants.signals.SIGTERM);
+  try {
+    fs.writeFileSync(path.join(dir, 'mysql-cli'), '#!/bin/sh\nkill -TERM $$\n', { mode: 0o755 });
+    const child = runShim(dir);
+    const [code, signal] = await new Promise((resolve) => child.on('close', (c, s) => resolve([c, s])));
+    assert.equal(signal, null);
+    assert.equal(code, 128 + os.constants.signals.SIGTERM);
+  } finally {
+    rmTemp(dir);
+  }
 });
 
 test('shim forwards SIGTERM to the child instead of orphaning it', { skip: process.platform === 'win32' }, async () => {
@@ -96,5 +110,6 @@ test('shim forwards SIGTERM to the child instead of orphaning it', { skip: proce
     assert.equal(code, 128 + os.constants.signals.SIGTERM);
   } finally {
     shimProc.kill('SIGKILL');
+    rmTemp(dir);
   }
 });

@@ -551,3 +551,89 @@ func TestMergeJSONFile_ReplacesTweakedHookEntry(t *testing.T) {
 	assert.Equal(t, float64(30), h["timeout"], "re-install resets the tweaked timeout via replacement")
 	assert.Contains(t, h["command"], "mysql-write-guard")
 }
+
+// --- F3: re-install keeps user hooks appended to OUR matcher group ---
+
+// TestMergeJSONFile_PreservesUserHooksInSameGroup（F3）：用户把自定义 hook
+// 追加进与我们相同 matcher 的 group 后重装，自定义条目必须保留、我们的
+// 条目更新为新版（不得整组替换静默删掉用户条目）。
+func TestMergeJSONFile_PreservesUserHooksInSameGroup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	ourCmd := `python3 "$HOME/.claude/hooks/mysql-write-guard.py"`
+	frag := preToolUseFragment("Bash", ourCmd)
+
+	// First install.
+	require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o644))
+	_, err := mergeJSONFile(path, frag)
+	require.NoError(t, err)
+
+	// User tweaks our entry (timeout 99) AND appends their own hook into the
+	// SAME matcher group's hooks array.
+	edited := map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				map[string]any{
+					"matcher": "Bash",
+					"hooks": []any{
+						map[string]any{"type": "command", "command": ourCmd, "timeout": 99},
+						map[string]any{"type": "command", "command": "echo user-own"},
+					},
+				},
+			},
+		},
+	}
+	b, err := json.Marshal(edited)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, b, 0o644))
+
+	// Re-install.
+	_, err = mergeJSONFile(path, frag)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(data, &got))
+	pre, _ := got["hooks"].(map[string]any)["PreToolUse"].([]any)
+	require.Len(t, pre, 1, "still a single group; no duplicate group appended")
+
+	group, _ := pre[0].(map[string]any)
+	assert.Equal(t, "Bash", group["matcher"])
+	entries, _ := group["hooks"].([]any)
+	require.Len(t, entries, 2, "our entry updated in place; user entry kept")
+
+	// Our entry was replaced by the fresh fragment (user's timeout tweak reset).
+	h0, _ := entries[0].(map[string]any)
+	assert.Equal(t, ourCmd, h0["command"])
+	_, hasTweak := h0["timeout"]
+	assert.False(t, hasTweak, "re-install resets our tweaked entry via replacement")
+
+	// The user's own entry survives the re-install.
+	h1, _ := entries[1].(map[string]any)
+	assert.Equal(t, "echo user-own", h1["command"])
+}
+
+// --- F4: guard-marker matching requires a path-anchored script name ---
+
+// TestCarriesOurHookMarker（F4）：特征匹配要求「路径分隔符 + 完整文件名
+// mysql-write-guard.py/.ts」，用户自建的 my-mysql-write-guard.py 不再被
+// 误判为我们的 hook。
+func TestCarriesOurHookMarker(t *testing.T) {
+	group := func(cmd any) map[string]any {
+		return map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command", "command": cmd}}}
+	}
+	// 我们安装的命令形态：路径 + mysql-write-guard.py（.ts）。
+	assert.True(t, carriesOurHook(group(`python3 "$HOME/.claude/hooks/mysql-write-guard.py"`)))
+	assert.True(t, carriesOurHook(group(`python3 "${CLAUDE_PROJECT_DIR:-$PWD}/.codebuddy/hooks/mysql-write-guard.py"`)))
+	assert.True(t, carriesOurHook(group(`python3 "$HOME/.trae-cn/hooks/mysql-write-guard.py"`)))
+	assert.True(t, carriesOurHook(group(`node /opt/tools/mysql-write-guard.ts`)))
+	// 用户自有脚本：文件名仅包含 mysql-write-guard 子串，前无路径分隔符。
+	assert.False(t, carriesOurHook(group(`python3 /hooks/my-mysql-write-guard.py`)), "my-mysql-write-guard.py is NOT ours")
+	assert.False(t, carriesOurHook(group(`python3 /hooks/mysql-write-guard.pyx`)))
+	assert.False(t, carriesOurHook(group(`python3 /hooks/mysql-write-guard-py`)))
+	assert.False(t, carriesOurHook(group(`python3 mysql-write-guard.py`)), "bare name without a path is not an install of ours")
+	// 无 command 字段 / 非 map 条目。
+	assert.False(t, carriesOurHook(map[string]any{"matcher": "Bash", "hooks": []any{map[string]any{"type": "command"}}}))
+	assert.False(t, carriesOurHook(map[string]any{"matcher": "Bash", "hooks": []any{"not-a-map"}}))
+}
