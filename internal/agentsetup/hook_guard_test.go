@@ -30,7 +30,11 @@ type guardCase struct {
 // guardCases is the shared detection matrix. It must cover at minimum:
 // read-only passthrough, each write flag (bare and =value forms), wrapped
 // bash -c invocations, the known false-positive shapes (echo/printf, SQL
-// string literals, comments), and shell chaining.
+// string literals, comments), shell chaining, and the injection vectors from
+// the red-team reviews (command substitution, eval, pipelines into a bare
+// shell, backslash escapes, deep nesting, env -S, interpreter -c payloads,
+// case variants) plus the documented known limitations (variable
+// indirection) whose behavior is locked here.
 var guardCases = []guardCase{
 	// --- read-only traffic passes through ---
 	{Name: "readonly passthrough", Command: `mysql-cli query "SELECT 1"`, WantHit: false},
@@ -80,6 +84,52 @@ var guardCases = []guardCase{
 	{Name: "other tool flags ignored", Command: `other-tool --write-cache /tmp/x`, WantHit: false},
 	{Name: "readonly chained before other tool", Command: `mysql-cli query "SELECT 1" && other-tool --write-cache`, WantHit: false},
 	{Name: "readonly wrapped with semicolon in SQL", Command: `bash -c "mysql-cli query 'SELECT a; SELECT b'"`, WantHit: false},
+
+	// --- command substitution bypass attempts must be caught (E1) ---
+	{Name: "cmd substitution flag blocks (E1)", Command: `mysql-cli query "UPDATE t SET a=1" $(echo --write)`, WantHit: true},
+	{Name: "backtick substitution flag blocks (E1)", Command: "mysql-cli query 'UPDATE t SET a=1' `echo --write`", WantHit: true},
+	{Name: "bash -c of substitution blocks (E1)", Command: `bash -c "$(echo 'mysql-cli --write query UPDATE t SET a=1')"`, WantHit: true},
+	{Name: "nested substitution blocks (E1)", Command: `mysql-cli query "UPDATE t SET a=1" $(echo $(echo --write))`, WantHit: true},
+	{Name: "unclosed substitution blocks (E1)", Command: `mysql-cli query "UPDATE t SET a=1" $(echo --write`, WantHit: true},
+	{Name: "substitution supplies command word blocks (E1)", Command: `$(echo mysql-cli) query "UPDATE t SET a=1" --write`, WantHit: true},
+	{Name: "substitution supplies wrapped command blocks (E1)", Command: `"$(bash -c 'mysql-cli --write query 1')"`, WantHit: true},
+
+	// --- eval bypass attempts must be caught (E2) ---
+	{Name: "eval double-quoted blocks (E2)", Command: `eval "mysql-cli --write query 'UPDATE t SET a=1'"`, WantHit: true},
+	{Name: "eval single-quoted blocks (E2)", Command: `eval 'mysql-cli --write query "UPDATE t SET a=1"'`, WantHit: true},
+	{Name: "sudo eval blocks (E2)", Command: `sudo eval "mysql-cli --write query UPDATE t SET a=1"`, WantHit: true},
+	{Name: "eval multi-arg blocks (E2)", Command: `eval mysql-cli --write query "UPDATE t SET a=1"`, WantHit: true},
+	{Name: "eval of variable stays allowed (known limit)", Command: `eval $CMD`, WantHit: false},
+
+	// --- pipelines into a bare shell must be caught (E3) ---
+	{Name: "echo piped to bash blocks (E3)", Command: `echo "mysql-cli --write query 'UPDATE t SET a=1'" | bash`, WantHit: true},
+	{Name: "printf piped to sh blocks (E3)", Command: `printf '%s' 'mysql-cli --write query "UPDATE t SET a=1"' | sh`, WantHit: true},
+	{Name: "doc echo without pipe stays allowed", Command: `echo "usage: mysql-cli query --write to modify data"`, WantHit: false},
+	{Name: "echo piped to non-shell stays allowed", Command: `echo "usage: mysql-cli query --write" | less`, WantHit: false},
+	{Name: "echo piped to bash -c cat stays allowed", Command: `echo "mysql-cli --write" | bash -c cat`, WantHit: false},
+	{Name: "echo piped to bash script stays allowed", Command: `echo "mysql-cli --write" | bash run.sh`, WantHit: false},
+
+	// --- backslash escapes must not dodge token matching (E4) ---
+	{Name: "escaped flag blocks (E4)", Command: `mysql-cli query "UPDATE t SET a=1" --wri\te`, WantHit: true},
+	{Name: "escaped command word blocks (E4)", Command: `mysql\-cli query "UPDATE t SET a=1" --write`, WantHit: true},
+	{Name: "triple nested bash -c quote escape blocks (E4)", Command: `bash -c 'bash -c '\''bash -c "mysql-cli --write query UPDATE t SET a=1"'\'''`, WantHit: true},
+
+	// --- deep nesting within the raised cap must be caught (E5) ---
+	{Name: "four-level bash -c nesting blocks (E5)", Command: `bash -c "bash -c 'bash -c \"mysql-cli --write query UPDATE t SET a=1\"'"`, WantHit: true},
+
+	// --- env -S split string must be caught (E6) ---
+	{Name: "env -S split string blocks (E6)", Command: `env -S "mysql-cli --write query 'UPDATE t SET a=1'"`, WantHit: true},
+
+	// --- interpreter -c/-e code payloads must be caught (E7) ---
+	{Name: "python -c subprocess blocks (E7)", Command: `python3 -c 'import subprocess; subprocess.run(["mysql-cli", "--write", "query", "UPDATE t SET a=1"])'`, WantHit: true},
+	{Name: "python -c without write flag stays allowed", Command: `python3 -c 'import subprocess; subprocess.run(["mysql-cli", "query", "SELECT 1"])'`, WantHit: false},
+	{Name: "node -e payload blocks (E7)", Command: `node -e 'child_process.execSync("mysql-cli --write query \"UPDATE t SET a=1\"")'`, WantHit: true},
+
+	// --- case-insensitive command word (E8, macOS FS) ---
+	{Name: "uppercase MYSQL-CLI blocks (E8)", Command: `MYSQL-CLI --write query "UPDATE t SET a=1"`, WantHit: true},
+
+	// --- known limitations: behavior locked by tests ---
+	{Name: "variable indirection stays allowed (known limit)", Command: `M="mysql-cli --write query 1"; $M`, WantHit: false},
 }
 
 // --- Python hook (mysql-write-guard.py) ---
@@ -208,7 +258,9 @@ func nodeVersion(t *testing.T) (major, minor int) {
 func runTSGuard(t *testing.T) []bool {
 	t.Helper()
 	node, err := exec.LookPath("node")
-	require.NoError(t, err)
+	if err != nil {
+		t.Skip("node not available; skipping TS guard matrix")
+	}
 	major, minor := nodeVersion(t)
 	if major < 22 || (major == 22 && minor < 6) {
 		t.Skipf("node %d.%d < 22.6 (type stripping unavailable); skipping TS guard matrix", major, minor)
